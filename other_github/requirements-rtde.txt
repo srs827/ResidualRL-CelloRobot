@@ -1,0 +1,27 @@
+# Robot-Cello-RL — extras for real-robot integration
+# Install ON TOP of requirements.txt (i.e., in the same venv).
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-rtde.txt
+#
+# These are not needed to run demo.py or train PPO on MockClassifier;
+# they're only needed when HardwareCelloEnv talks to the UR5e and mic.
+#
+# === macOS install gotcha (Apple Silicon, 2026-05) ===
+# ur_rtde builds from source via CMake and links against Boost. The default
+# `brew install boost` gives Boost 1.90 which dropped the separate
+# boost_system CMake target that ur_rtde looks for. Workaround:
+#
+#   brew install cmake boost@1.85
+#   CMAKE_PREFIX_PATH="$(brew --prefix boost@1.85)" \
+#     Boost_DIR="$(brew --prefix boost@1.85)/lib/cmake/Boost-1.85.0" \
+#     pip install --no-cache-dir ur_rtde
+#
+# On Linux the plain `pip install ur_rtde` usually works.
+
+ur_rtde         # rtde_control / rtde_receive / rtde_io / dashboard_client
+sounddevice     # mic capture in hardware/mic_recorder.py
+mido            # MIDI parsing for Baseline-Runners/rtde_v3.py and robot_runner_rtde.py
+
+# Optional, if you also want sb3-based SAC training as an alternative algorithm:
+# stable_baselines3

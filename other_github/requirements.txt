@@ -1,0 +1,32 @@
+# Robot-Cello-RL — summer 2026 working copy
+# Verified on macOS 14 (Apple Silicon) + Python 3.11.2, 2026-05-19
+#
+# Minimum set to run:
+#   python demo.py
+#   python -m rl.ppo.train_ppo
+#   python -m rl.ppo.infer_ppo
+#
+# For real-robot integration also install requirements-rtde.txt
+# (ur_rtde, sounddevice). Those are kept separate so Mac/dev machines
+# without RTDE access don't need them.
+
+# --- RL / numerics ---
+torch==2.12.0
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.8.0
+joblib==1.5.3
+pandas==3.0.3
+gymnasium==1.3.0
+
+# --- Audio: librosa replacement for Essentia ---
+librosa==0.11.0
+pyloudnorm==0.2.0
+soundfile==0.13.1
+
+# --- Transitive deps that librosa+numba pin tightly; listed for reproducibility ---
+audioread==3.1.0
+numba==0.65.1
+llvmlite==0.47.0
+pooch==1.9.0
+soxr==1.1.0

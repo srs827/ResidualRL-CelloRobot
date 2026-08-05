@@ -1,0 +1,93 @@
+# probe_contact.py settled force-depth profiles, 2026-06-22 (bow-tip TCP, new normal [0.21,0.92,0.32])
+# d<0 = above the taught pose along the normal; d=0 = taught pose. F_axis = dot(F, E_PRESS); E_PRESS into string.
+# NORMAL contact (string pushing out against the press) => F_axis NEGATIVE.
+
+## frac 0.15 (frog end), floor 0.397N
+#  d(mm) |F|    F_axis
+  -18.0  0.41  -0.36
+  -17.0  0.61  -0.42
+  -16.0  0.71  -0.42
+  -15.0  0.84  -0.53
+  -14.0  1.10  -0.66
+  -13.0  1.25  -0.66
+  -12.0  1.28  -0.49
+  -11.0  1.42  -0.55
+  -10.0  1.48  -0.58
+   -9.0  1.48  -0.61
+   -8.0  1.49  -0.61
+   -7.0  1.42  -0.59
+   -6.0  1.45  -0.55
+   -5.0  1.40  -0.46
+   -4.0  1.36  -0.46
+   -3.0  1.39  -0.61
+   -2.0  1.38  -0.70
+   -1.0  1.64  -1.14
+    0.0  2.06  -1.64
+    1.0  2.48  -2.22
+    2.0  2.82  -2.61
+    3.0  3.09  -2.92
+    4.0  3.42  -3.29
+    5.0  3.97  -3.86
+
+## frac 0.50 (mid), floor 0.216N
+  -18.0  0.21   0.03
+  -17.0  0.43   0.26
+  -16.0  0.48   0.36
+  -15.0  0.38   0.30
+  -14.0  0.44   0.38
+  -13.0  0.48   0.37
+  -12.0  0.44   0.33
+  -11.0  0.63   0.52
+  -10.0  0.71   0.65
+   -9.0  0.64   0.57
+   -8.0  0.94   0.83
+   -7.0  0.93   0.84
+   -6.0  0.92   0.84
+   -5.0  0.88   0.77
+   -4.0  1.14   0.99
+   -3.0  0.87   0.75
+   -2.0  0.84   0.73
+   -1.0  0.67   0.61
+    0.0  0.38   0.18
+    1.0  0.34   0.07
+    2.0  0.43  -0.10
+    3.0  0.47  -0.33
+    4.0  0.68  -0.51
+    5.0  0.78  -0.66
+
+## frac 0.90 (tip end), floor 0.214N
+  -18.0  0.34   0.05
+  -17.0  0.11   0.01
+  -16.0  0.23   0.04
+  -15.0  0.07   0.05
+  -14.0  0.12  -0.11
+  -13.0  0.13   0.01
+  -12.0  0.30   0.19
+  -11.0  0.46   0.34
+  -10.0  0.63   0.53
+   -9.0  0.70   0.63
+   -8.0  0.76   0.65
+   -7.0  0.74   0.60
+   -6.0  1.03   0.89
+   -5.0  1.15   0.93
+   -4.0  1.11   0.89
+   -3.0  1.08   0.85
+   -2.0  0.82   0.66
+   -1.0  0.68   0.37
+    0.0  0.55   0.08
+    1.0  0.50   0.02
+    2.0  0.56  -0.05
+    3.0  0.50  -0.23
+    4.0  0.71  -0.54
+    5.0  0.81  -0.68
+
+# OBSERVATIONS (2026-06-22, to analyze fresh):
+# - At the taught pose (d=0): frog F_axis=-1.64 (firmly pressing into string), mid F_axis=+0.18,
+#   tip F_axis=+0.08 (NOT normally engaged). => normal-engagement depth varies ~3-4mm frog->tip
+#   (frog deeper). That is a real geometric TILT, not pure bow-stiffness (stiffness shifts slope,
+#   not where engagement starts).
+# - BUT mid/tip profiles are NON-MONOTONIC: |F| humps ~ -4mm (F_axis POSITIVE there) then DROPS
+#   near d=0, rises again past +3. Positive F_axis = a non-normal force (friction / glancing /
+#   neighbour-string?) before clean normal contact. Unexplained; needs fresh analysis.
+# - Descent here is ALONG the new normal (-Y). find_normal (descended base -Z) gave a clean
+#   single normal; the discrepancy with these messy profiles is itself a clue to chase.

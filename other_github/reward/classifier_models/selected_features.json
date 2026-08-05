@@ -1,0 +1,1 @@
+{"selected_features": ["lowlevel.loudness_ebu128.short_term.mean", "lowlevel.melbands_crest.mean", "lowlevel.spectral_centroid.stdev", "lowlevel.spectral_entropy.mean", "lowlevel.spectral_flux.stdev", "lowlevel.spectral_rolloff.stdev"]}

@@ -1,0 +1,10 @@
+# ---- recording_grid.py  AND  Baseline-Runners/baseline_controller.py (one consistent pair) ----
+FROG_TARGET_STR = np.array([0.324238418, 0.704211662, -0.018231576, -1.480589117, -2.219709936, 1.393641334])
+TIP_TARGET_STR  = np.array([0.535853306, 0.227924137, 0.160773823, -1.480589117, -2.219709936, 1.393641334])
+
+# ---- hardware_baseline.py fingerprint  [FROG[0], FROG[2], TIP[0], TIP[2]] ----
+#   [0.324238418, -0.018231576, 0.535853306, 0.160773823]
+
+# RETRACT_DIR_BASE: keep old provisionally; acceptance_mount F_axis vs |F| verifies it.
+
+# span=551mm off_axis_deg=4.8

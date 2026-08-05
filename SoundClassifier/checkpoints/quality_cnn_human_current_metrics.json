@@ -1,0 +1,46 @@
+{
+  "checkpoint": "SoundClassifier/checkpoints/quality_cnn_human_current.pt",
+  "label_source": "human_annotation",
+  "pseudo_labels": false,
+  "annotation_exports": [
+    "SoundClassifier/Data_Collection/public_annotation_packages_a_final/results/annotations_A1.json",
+    "SoundClassifier/Data_Collection/public_annotation_packages_a_final/results/annotations_A2.json"
+  ],
+  "metadata_snapshot": "SoundClassifier/Data_Collection/dataset_a_final/metadata_human_current.jsonl",
+  "ratings_imported": 399,
+  "annotators": {
+    "A1": 200,
+    "A2": 199
+  },
+  "usable_recordings": 349,
+  "recordings_with_one_rating": 299,
+  "recordings_with_two_ratings": 50,
+  "flagged_recordings_excluded": 1,
+  "unfinished_tasks_excluded": 50,
+  "training_windows": 5016,
+  "train_windows": 3980,
+  "validation_windows": 1036,
+  "validation_fraction": 0.2,
+  "split_seed": 0,
+  "epochs": 60,
+  "batch_size": 64,
+  "best_validation_mse": 0.03547751844562159,
+  "best_validation_window_spearman_rho": 0.694,
+  "best_validation_recording_spearman_rho": 0.7018578903514263,
+  "ridge_baseline_recording_spearman_rho": 0.641,
+  "per_config_recording_spearman_rho": {
+    "board": 0.664,
+    "botangle": 0.58,
+    "bridge": 0.776,
+    "standard": 0.834,
+    "topangle": 0.636
+  },
+  "technical_rating_means_1_to_4": {
+    "overall": 2.488721804511278,
+    "tone_quality": 2.5764411027568923,
+    "attack_quality": 2.6140350877192984,
+    "release_quality": 2.3132832080200503,
+    "bow_control": 2.761904761904762,
+    "dynamic_accuracy": 2.5789473684210527
+  }
+}

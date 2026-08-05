@@ -1,0 +1,24 @@
+robotcello/
+.vscode/
+__pycache__/
+*.pyc
+tb_logs/
+.venv/
+.venv-rtde/
+test_audio/
+.DS_Store
+
+# Note: model weights (*.pt) and checkpoints/ are TRACKED so the repo is
+# self-contained — Samantha can clone and run the demo without retraining.
+# If checkpoints/ grows too large, switch to git-lfs.
+
+# --- 2026-07-10 consolidation: experiment data stays LOCAL (pre-publication + size) ---
+rl_runs/
+tone_*/
+mic_smoke/
+chain_check/
+gaintest/
+cam_smoke/
+mount_acceptance/
+dataset_*/
+oneshot_*.wav

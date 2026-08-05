@@ -1,0 +1,6 @@
+# ---- recording_grid.py AND Baseline-Runners/baseline_controller.py (consistent pair) ----
+# READ-ONLY LOCAL-mode capture, NEW angle, translation-locked, bow-tip frame. 2026-06-27.
+FROG_TARGET_STR = np.array([0.332317806, 0.804418934, 0.221235112, -1.423855578, -2.172165015, 1.374086581])
+TIP_TARGET_STR  = np.array([0.523883459, 0.376279669, 0.364280722, -1.423855578, -2.172165015, 1.374086581])
+# fingerprint [FROG0,FROG2,TIP0,TIP2] = [0.332317806, 0.221235112, 0.523883459, 0.364280722]
+# span=490mm drift=0.00deg

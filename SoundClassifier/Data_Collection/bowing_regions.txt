@@ -1,0 +1,79 @@
+# -- A string --------------
+
+## top angle
+A_TOP_ANGLE_F = np.array([.43613, .69256, -.29752, 1.041, 2.850, -1.655])
+A_TOP_ANGLE_T = np.array([.654442, .37533, .13275, 1.041, 2.850, -1.655])
+A_TOP_ANGLE_Q_F = np.radians(np.array([-133.55, -5.82, 20.44, -44.92, -94.26, -180.87]))
+A_TOP_ANGLE_Q_T = np.radians(np.array([-160.49, -21.25, 49.16, -62.38, -117.08, -195.75]))
+
+## mid angle
+A_MID_ANGLE_F = np.array([.27184, .78359, .12283, 1.620, 2.492, -1.119])
+A_MID_ANGLE_T = np.array([.43098, .30660, .27219, 1.653, 2.510, -1.229])
+A_MID_ANGLE_Q_F = np.radians(np.array([-123.73, -15.96, 36.24, -68.95, -88.42, -148.13]))
+A_MID_ANGLE_Q_T = np.radians(np.array([-162.55, -61.12, 100.79, -89.21, -111.21, -177.77]))
+
+## bottom angle 
+A_BOTTOM_ANGLE_F = np.array([.35351, .79398, .10399, 1.900, 2.221, -1.728])
+A_BOTTOM_ANGLE_T  = np.array([.44659, .38004, -.07432, 1.905, 2.196, -1.791])
+A_BOTTOM_ANGLE_Q_F = np.radians(np.array([-127.93, -5.06, 15.80, -39.01, -75.06, -145.71]))
+A_BOTTOM_ANGLE_Q_T = np.radians(np.array([-158.76, -60.43, 88.26, -53.40, -101.68, -159.46]))
+
+# -- D string ---------------
+
+## top angle
+D_TOP_ANGLE_F = np.array([.42075, .70016, .07254, 1.284, 2.923, -1.959])
+D_TOP_ANGLE_T = np.array([.59077, .28077, .06251, 1.284, 2.923, -1.959])
+D_TOP_ANGLE_Q_F = np.radians(np.array([-132.09, -4.54, 22.76, -37.51, -78.11, -183.02]))
+D_TOP_ANGLE_Q_T = np.radians(np.array([-166.68, -26.90, 75.03, -68.39, -110.66, -194.56]))
+
+## mid angle
+D_MID_ANGLE_F = np.array([.39034, .69286, .08219, 2.000, 2.779, -1.665])
+D_MID_ANGLE_T = np.array([.39053, .22339, .08530, 2.000, 2.779, -1.665])
+D_MID_ANGLE_Q_F = np.radians(np.array([-132.28, -15.66, 45.61, -60.20, -61.64, -167.18]))
+D_MID_ANGLE_Q_T = np.radians(np.array([-170.10, -44.50, 116.48, -98.47, -95.11, -185.17]))
+
+## bottom angle 
+D_BOTTOM_ANGLE_F = np.array([.37416, .71903, .10273, 2.556, 2.153, -1.856])
+D_BOTTOM_ANGLE_T = np.array([.24806, .27354, .21650, 2.556, 2.153, -1.856])
+D_BOTTOM_ANGLE_Q_F = np.radians(np.array([-131.17, -21.64, 53.90, -60.61, -48.57, -146.67]))
+D_BOTTOM_ANGLE_Q_T = np.radians(np.array([-162.99, -74.77, 136.07, -82.73, -77.57, -161.54]))
+
+# -- G string ---------------
+
+## top angle
+G_TOP_ANGLE_F = np.array([.38029, .63846, .06457, 2.061, 3.128, -1.493])
+G_TOP_ANGLE_T = np.array([.35515, .18951, -.05136, 2.061, 3.128, -1.493])
+G_TOP_ANGLE_Q_F = np.radians(np.array([-133.09, -19.37, 57.96, -69.60, -51.61, -178.44]))
+G_TOP_ANGLE_Q_T = np.radians(np.array([-171.19, -24.74, 115.53, -114.74, -85.68, -196.86]))
+
+## mid angle
+G_MID_ANGLE_F = np.array([.32869, .64247, .09041, 2.462, 2.632, -1.192])
+G_MID_ANGLE_T = np.array([.23545, .22704, .05865, 2.462, 2.632, -1.192])
+G_MID_ANGLE_Q_F = np.radians(np.array([-132.62, -28.14, 74.65, -95.90, -54.17, -149.87]))
+G_MID_ANGLE_Q_T = np.radians(np.array([-167.00, -42.39, 138.49, -134.95, -79.33, -175.59]))
+
+## bottom angle 
+G_BOTTOM_ANGLE_F = np.array([.36775, .65103, .07817, 2.827, 2.305, -1.771])
+G_BOTTOM_ANGLE_T = np.array([.16714, .20374, .11027, 2.827, 2.305, -1.771])
+G_BOTTOM_ANGLE_Q_F = np.radians(np.array([-133.08, -25.58, 69.35, -73.51, -37.49, -153.20]))
+G_BOTTOM_ANGLE_Q_T = np.radians(np.array([-170.44, -52.39, 153.44, -119.67, -71.90, -171.51]))
+
+# -- C string ---------------
+
+## top angle
+C_TOP_ANGLE_F = np.array([.35300, .60179, .05862, 2.559, 3.040, -1.359])
+C_TOP_ANGLE_T = np.array([.21635, .20883, -0.09254, 2.559, 3.040, -1.359])
+C_TOP_ANGLE_Q_F = np.radians(np.array([-133.49, -24.56, 72.54, -81.58, -36.99, -173.02]))
+C_TOP_ANGLE_Q_T = np.radians(np.array([-164.21, -14.40, 126.87, -134.28, -64.49, -191.00]))
+
+## mid angle
+C_MID_ANGLE_F = np.array([.29998, .58924, .07835, 2.873, 2.569, -1.046])
+C_MID_ANGLE_T = np.array([.15512, .29383, .01174, 2.873, 2.569, -1.046])
+C_MID_ANGLE_Q_F = np.radians(np.array([-133.39, -31.41, 90.04, -115.59, -40.42, -142.33]))
+C_MID_ANGLE_Q_T = np.radians(np.array([-150.52, -29.11, 138.47, -153.55, -51.51, -160.52]))
+
+## bottom angle 
+C_BOTTOM_ANGLE_F = np.array([.31978, .63974, .07771, 3.123, 2.168, -1.131])
+C_BOTTOM_ANGLE_T = np.array([.05780, .27254, .06287, 3.123, 2.168, -1.131])
+C_BOTTOM_ANGLE_Q_F = np.radians(np.array([-132.16, -28.64, 84.18, -117.81, -37.66, -125.26]))
+C_BOTTOM_ANGLE_Q_T = np.radians(np.array([-145.42, -26.06, 155.24, -179.14, -45.32, -141.62]))

@@ -1,0 +1,95 @@
+ python3 baseline_controller.py ../MIDI-Files/twinkle_twinkle-open.mid
+Parsed 42 notes from ../MIDI-Files/twinkle_twinkle-open.mid
+  [1] dur=0.50s  vel= 80  dyn=f   dir=down
+  [2] dur=0.50s  vel= 80  dyn=f   dir=up
+  [3] dur=0.50s  vel= 80  dyn=f   dir=down
+  [4] dur=0.50s  vel= 80  dyn=f   dir=up
+  [5] dur=0.50s  vel= 80  dyn=f   dir=down
+  [6] dur=0.50s  vel= 80  dyn=f   dir=up
+  [7] dur=1.00s  vel= 80  dyn=f   dir=down
+  [8] dur=0.50s  vel= 80  dyn=f   dir=up
+  ... (34 more)
+Connecting to 192.168.1.100...
+Connected.
+  TCP pose:  [0.3547058685407665, 0.741389129449769, 0.13392707934547013, -1.369957959115947, -2.336388903950783, 1.3274910570941891]
+  TCP force: [0.3513974358674495, 0.26309459600355906, -0.6569693144581574, -0.012253516585592152, 0.012835866332861755, -0.011167389167432352]
+  Joints:    [-2.257983986531393, -0.25221438825640874, 0.5559013525592249, -0.9544786375812073, -1.5795815626727503, -2.761926237736837]
+Moving to frog position...
+  ✓ Contact: 1.700N
+Ready at frog.
+
+Press ENTER to begin playback (Ctrl+C to abort)...
+  Note   1/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step=   0 | force_cmd=4.13N  fz=+1.249N  contact_mag=1.696N | bow=0.00 | dyn=f  dir=down
+  Note   2/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note   3/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step=  20 | force_cmd=4.13N  fz=-0.556N  contact_mag=2.426N | bow=0.01 | dyn=f  dir=down
+  Note   4/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note   5/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step=  40 | force_cmd=4.13N  fz=+0.538N  contact_mag=1.097N | bow=0.04 | dyn=f  dir=down
+  Note   6/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note   7/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=down  steps=19
+  step=  60 | force_cmd=4.13N  fz=+0.411N  contact_mag=1.559N | bow=0.07 | dyn=f  dir=down
+  Note   8/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step=  80 | force_cmd=4.13N  fz=+0.167N  contact_mag=0.787N | bow=0.19 | dyn=f  dir=up
+  Note   9/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  10/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  11/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step= 100 | force_cmd=4.13N  fz=-0.766N  contact_mag=1.411N | bow=0.16 | dyn=f  dir=down
+  Note  12/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  13/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step= 120 | force_cmd=4.13N  fz=-0.643N  contact_mag=1.172N | bow=0.15 | dyn=f  dir=down
+  Note  14/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=up  steps=19
+  step= 140 | force_cmd=4.13N  fz=-0.235N  contact_mag=0.994N | bow=0.13 | dyn=f  dir=up
+  Note  15/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  16/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 160 | force_cmd=4.13N  fz=-0.008N  contact_mag=1.215N | bow=0.11 | dyn=f  dir=up
+  Note  17/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  18/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 180 | force_cmd=4.13N  fz=-0.047N  contact_mag=0.950N | bow=0.08 | dyn=f  dir=up
+  Note  19/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  20/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  21/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=down  steps=19
+  step= 200 | force_cmd=4.13N  fz=-1.042N  contact_mag=1.656N | bow=0.05 | dyn=f  dir=down
+  Note  22/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 220 | force_cmd=4.13N  fz=+0.837N  contact_mag=1.346N | bow=0.26 | dyn=f  dir=up
+  Note  23/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  24/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 240 | force_cmd=4.13N  fz=-0.317N  contact_mag=0.968N | bow=0.26 | dyn=f  dir=up
+  Note  25/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  26/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 260 | force_cmd=4.13N  fz=-0.460N  contact_mag=0.806N | bow=0.23 | dyn=f  dir=up
+  Note  27/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  28/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=up  steps=19
+  step= 280 | force_cmd=4.13N  fz=-0.034N  contact_mag=1.242N | bow=0.20 | dyn=f  dir=up
+  Note  29/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step= 300 | force_cmd=4.13N  fz=+0.473N  contact_mag=2.117N | bow=0.10 | dyn=f  dir=down
+  Note  30/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  31/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  32/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 320 | force_cmd=4.13N  fz=+0.120N  contact_mag=1.264N | bow=0.13 | dyn=f  dir=up
+  Note  33/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  34/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  step= 340 | force_cmd=4.13N  fz=-0.558N  contact_mag=0.654N | bow=0.13 | dyn=f  dir=up
+  Note  35/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=down  steps=19
+  step= 360 | force_cmd=4.13N  fz=+0.606N  contact_mag=1.219N | bow=0.18 | dyn=f  dir=down
+  Note  36/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  37/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step= 380 | force_cmd=4.13N  fz=+0.208N  contact_mag=2.225N | bow=0.20 | dyn=f  dir=down
+  Note  38/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  39/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  step= 400 | force_cmd=4.13N  fz=-0.004N  contact_mag=1.895N | bow=0.23 | dyn=f  dir=down
+  Note  40/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=up  steps=9
+  Note  41/42 | dyn=f   vel= 80  dur=0.50s  force=4.13N  speed=0.109m/s  dir=down  steps=9
+  Note  42/42 | dyn=f   vel= 80  dur=1.00s  force=4.13N  speed=0.109m/s  dir=up  steps=19
+  step= 420 | force_cmd=4.13N  fz=+0.181N  contact_mag=0.724N | bow=0.26 | dyn=f  dir=up
+
+Complete. 438 steps executed.
+
+Session summary:
+  Contact magnitude: 1.274 ± 0.534N  (max=3.702N)
+  fz mean:           0.014N
+  Speed mean:        0.111m/s
+  Bow range:         0.00 → 0.05
+  Samples logged:    2002
+Controller closed. 

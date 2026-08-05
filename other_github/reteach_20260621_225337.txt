@@ -1,0 +1,13 @@
+# ---- recording_grid.py  AND  Baseline-Runners/baseline_controller.py ----
+#      (Zixian's call: ONE consistent pair in BOTH files — also resolves the old 2mm z
+#       discrepancy. baseline_controller is Samantha's file -> heads-up to her.)
+FROG_TARGET_STR = np.array([0.324643040, 0.714335693, -0.025033255, -1.480580642, -2.219731589, 1.393632731])
+TIP_TARGET_STR  = np.array([0.562064326, 0.228618765, 0.126311976, -1.480580642, -2.219731589, 1.393632731])
+
+# ---- hardware_baseline.py (replace the fingerprint values in the assert) ----
+# [FROG[0], FROG[2], TIP[0], TIP[2]] =
+#   [0.324643040, -0.025033255, 0.562064326, 0.126311976]
+
+# RETRACT_DIR_BASE: KEEP old RETRACT_DIR_BASE provisionally — the string normal is cello-defined (unchanged by the bow swap or a pure cello translation; changes only on cello ROTATION). acceptance_mount F_axis vs |F| MUST verify: clean axial = good; large lateral = cello rotated -> re-derive (find-liftoff).
+
+# frog_tip_spread=0.0000rad usable=True span=561mm reach_frog=0.785 reach_tip=0.620

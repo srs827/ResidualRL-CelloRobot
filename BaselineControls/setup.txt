@@ -1,0 +1,22 @@
+# 1. Verify connection
+python verify_connection.py
+
+# 2. Calibrate force control (robot must be on target string)
+python -c "
+from baseline_controller import *
+import rtde_control, rtde_receive
+rtde_c = rtde_control.RTDEControlInterface('10.165.11.242')
+rtde_r = rtde_receive.RTDEReceiveInterface('10.165.11.242')
+from baseline_controller import TCP_OFFSET, PAYLOAD_KG, PAYLOAD_COG
+rtde_c.setTcp(TCP_OFFSET); rtde_c.setPayload(PAYLOAD_KG, PAYLOAD_COG)
+calibrate_force(rtde_c, rtde_r)
+"
+
+# 3. Test baseline plays correctly
+python baseline_controller.py ../MIDI-Files/twinkle_twinkle-open.mid
+
+# 4. Run data collection
+python recording_script.py
+
+# 5. Validate after session
+python validate_dataset.py

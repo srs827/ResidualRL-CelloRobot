@@ -1,0 +1,70 @@
+{
+  "overall": {
+    "record_mse": 6.166551521684473e-05,
+    "record_spearman": 0.9915552302209207,
+    "label_mean": 0.7465577584393284,
+    "pred_mean": 0.7451982612520806
+  },
+  "tone_quality": {
+    "record_mse": 2.3650532648868228e-05,
+    "record_spearman": 0.9980466801867207,
+    "label_mean": 0.7344625261910503,
+    "pred_mean": 0.7310635996781651
+  },
+  "attack_quality": {
+    "record_mse": 1.4383635801614722e-05,
+    "record_spearman": 0.9869793719174875,
+    "label_mean": 0.8515940444311905,
+    "pred_mean": 0.8499001715914626
+  },
+  "release_quality": {
+    "record_mse": 9.325172810815014e-05,
+    "record_spearman": 0.9566773307093227,
+    "label_mean": 0.6515161638009231,
+    "pred_mean": 0.6460578958026917
+  },
+  "bow_control": {
+    "record_mse": 0.00010722016027340886,
+    "record_spearman": 0.9905430021720087,
+    "label_mean": 0.5844871278867252,
+    "pred_mean": 0.5802699371862386
+  },
+  "dynamic_accuracy": {
+    "record_mse": 0.0006438057471599769,
+    "record_spearman": 0.6630225240900962,
+    "label_mean": 0.9769444258213044,
+    "pred_mean": 0.9778423182324156
+  },
+  "by_config": {
+    "board": {
+      "n_recordings": 100,
+      "overall_spearman": 0.9558595859585959,
+      "overall_label_mean": 0.7052475488119565,
+      "overall_pred_mean": 0.7009568787906797
+    },
+    "botangle": {
+      "n_recordings": 100,
+      "overall_spearman": 0.9695049504950494,
+      "overall_label_mean": 0.7930135085984185,
+      "overall_pred_mean": 0.7956119179326777
+    },
+    "bridge": {
+      "n_recordings": 100,
+      "overall_spearman": 0.981182118211821,
+      "overall_label_mean": 0.7902659915475978,
+      "overall_pred_mean": 0.7909936650146452
+    },
+    "standard": {
+      "n_recordings": 100,
+      "overall_spearman": 0.9802460246024602,
+      "overall_label_mean": 0.7402869274376919,
+      "overall_pred_mean": 0.7373257503568224
+    },
+    "topangle": {
+      "n_recordings": 100,
+      "overall_spearman": 0.9556315631563156,
+      "overall_label_mean": 0.7039748158009771,
+      "overall_pred_mean": 0.7011030941655784
+    }
+  }
+}

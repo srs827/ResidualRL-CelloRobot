@@ -1,0 +1,52 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/settings.local.json
+
+# Python environments and caches
+.venv/
+.venv*/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.matplotlib_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Training and experiment outputs
+/checkpoints/
+/rl/checkpoints*/
+tb_logs/
+runs/
+*.log
+*.wav
+*.npy
+*.npz
+!tests/fixtures/**/*.wav
+!tests/fixtures/**/*.npy
+
+# Robot performance captures
+/BaselineControls/performances/
+
+# Large/private sound-classifier datasets and annotation exports. Keep the
+# scripts and schema documentation in Git; distribute data separately.
+/SoundClassifier/Data_Collection/dataset*/
+/SoundClassifier/Data_Collection/label_studio_data/
+/SoundClassifier/Data_Collection/label_studio_tasks*/
+/SoundClassifier/Data_Collection/public_annotation_packages*/
+/SoundClassifier/Data_Collection/mic_test_output/
