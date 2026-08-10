@@ -37,6 +37,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from rl.piece_env import PMP, ExecutorBase, ExecStroke, StrokeResult
+from rl.loudness import measure_dbfs
 
 WINDOW_SEC = 0.5          # classifier window (SoundClassifier convention)
 PRE_ROLL_SEC = 0.05       # skip the attack transient when the stroke is long
@@ -53,7 +54,12 @@ class HardwareExecutor(ExecutorBase):
     One connection for the whole training run; one bow placement per episode.
     """
 
-    def __init__(self, audio_device=None, audio_channel: int = 1,
+    # audio_channel=0 means "probe and pick the input that actually has
+    # signal", the same convention (and the same default) recording_a_only
+    # uses. Defaulting to 1 is exactly the mistake its comment warns about:
+    # channel 1 on this rig is an empty socket at -91.9 dBFS, so a run would
+    # record silence and score every stroke identically.
+    def __init__(self, audio_device=None, audio_channel: int = 0,
                  retake_speed: float = PMP.RETAKE_SPEED,
                  save_dir: Path | None = None):
         import rtde_control
@@ -131,17 +137,20 @@ class HardwareExecutor(ExecutorBase):
             self._stream.close()
             self._stream = None
 
+    @staticmethod
+    def _window_centre(t_start: float, t_end: float) -> float:
+        dur = t_end - t_start
+        if dur > WINDOW_SEC + 2 * PRE_ROLL_SEC:
+            return t_start + PRE_ROLL_SEC + (dur - PRE_ROLL_SEC) / 2.0
+        return (t_start + t_end) / 2.0
+
     def _slice_window(self, t_start: float, t_end: float) -> np.ndarray | None:
         """~500 ms peak-normalized window from the middle of [t_start, t_end]."""
         if self._audio_t0 is None or not self._chunks:
-            return None
+            return None, None
         audio = np.concatenate(self._chunks)
         sr = self.sample_rate
-        dur = t_end - t_start
-        if dur > WINDOW_SEC + 2 * PRE_ROLL_SEC:
-            centre = t_start + PRE_ROLL_SEC + (dur - PRE_ROLL_SEC) / 2.0
-        else:
-            centre = (t_start + t_end) / 2.0
+        centre = self._window_centre(t_start, t_end)
         lo = int((centre - self._audio_t0 - WINDOW_SEC / 2.0) * sr)
         hi = lo + int(WINDOW_SEC * sr)
         lo = max(lo, 0)
@@ -149,11 +158,17 @@ class HardwareExecutor(ExecutorBase):
             hi = len(audio)
         window = audio[lo:hi]
         if len(window) == 0:
-            return None
+            return None, None
+
+        # Absolute level FIRST. The classifier wants a peak-normalised window
+        # (that is what it was trained on), but normalising is exactly what
+        # destroys the loudness the dynamics reward needs to measure.
+        dbfs = measure_dbfs(window)
+
         peak = float(np.max(np.abs(window)))
         if peak > 1e-6:
             window = window / peak
-        return window.astype(np.float32)
+        return window.astype(np.float32), dbfs
 
     # ── episode plumbing ──────────────────────────────────────────
 
@@ -193,7 +208,14 @@ class HardwareExecutor(ExecutorBase):
             time.sleep(gap)
 
         t_start = time.time()
-        self.player._play(_as_plan_stroke(stroke))
+        try:
+            self.player._play(_as_plan_stroke(stroke))
+        except PMP.RobotFaultStop:
+            # "moveL returned False" on its own says nothing about WHY, and by
+            # the time anyone reads the traceback the controller state that
+            # caused it is gone. Snapshot it here, while it is still true.
+            self._report_fault(stroke)
+            raise
         t_end = time.time()
 
         # Physical params in dataset.build_physical_features slot order.
@@ -207,9 +229,18 @@ class HardwareExecutor(ExecutorBase):
             summary.get("torque_mag_max", 0.0),             # torque_max_or_torque
         ], dtype=np.float32)
 
-        # Wait for the tail of the window to be captured before slicing.
-        time.sleep(0.06)
-        audio = self._slice_window(t_start, t_end)
+        # Wait for the tail of the window to actually be captured before
+        # slicing. A fixed pause is not enough: the window is centred on the
+        # stroke, so a SHORT note needs audio from well past its end, and
+        # slicing early returns a truncated window that the classifier then
+        # zero-pads -- silence the model never saw in training. Wait for the
+        # real end of the window, with a bound so a stalled input stream can
+        # never hang the run.
+        window_end = self._window_centre(t_start, t_end) + WINDOW_SEC / 2.0
+        deadline = min(window_end + 0.02, t_end + 0.5)
+        while time.time() < deadline:
+            time.sleep(0.01)
+        audio, dbfs = self._slice_window(t_start, t_end)
 
         if self.save_dir and audio is not None:
             import soundfile as sf
@@ -221,12 +252,51 @@ class HardwareExecutor(ExecutorBase):
         return StrokeResult(
             audio=audio,
             physical=physical,
+            measured_dbfs=dbfs,
             measured_mean_speed=float(measured_speed),
             # The command in u-space is authoritative for the bow budget
             # (moveL either completes or safe_moveL raises); the logger's
             # bow_pos projection is diagnostic only.
             achieved_u_end=float(stroke.u_end),
         )
+
+    def _report_fault(self, stroke: ExecStroke):
+        """
+        Dump controller and contact state at the moment a move failed.
+
+        moveL returns False for several unrelated reasons — protective stop,
+        the control script having died, an unreachable target — and they need
+        different fixes. These are the readings that tell them apart.
+        """
+        print("\n" + "=" * 70)
+        print(f"ROBOT FAULT during note {stroke.note_index} ({stroke.direction})")
+        print(f"  commanded: u {stroke.u_start:.3f}->{stroke.u_end:.3f}  "
+              f"{stroke.length*1000:.1f} mm  {stroke.speed:.3f} m/s  "
+              f"accel {stroke.accel:.2f}  depth {stroke.depth*1000:+.2f} mm")
+        r = self.rtde_r
+        for label, fn in (
+            ("robot_mode", "getRobotMode"),
+            ("safety_mode", "getSafetyMode"),
+            ("safety_status_bits", "getSafetyStatusBits"),
+            ("runtime_state", "getRuntimeState"),
+        ):
+            try:
+                print(f"  {label}: {getattr(r, fn)()}")
+            except Exception as e:
+                print(f"  {label}: unavailable ({type(e).__name__})")
+        try:
+            force = np.asarray(r.getActualTCPForce(), dtype=float)
+            print(f"  |F| at fault: {np.linalg.norm(force[:3]):.3f} N   "
+                  f"F={[round(v, 3) for v in force[:3]]}")
+            print(f"  TCP pose:  {[round(v, 4) for v in r.getActualTCPPose()]}")
+        except Exception as e:
+            print(f"  force/pose unavailable ({type(e).__name__})")
+        try:
+            print(f"  control script running: "
+                  f"{self.player.rtde_c.isProgramRunning()}")
+        except Exception as e:
+            print(f"  control script state unavailable ({type(e).__name__})")
+        print("=" * 70 + "\n")
 
     def end_episode(self):
         self.logger.stop()

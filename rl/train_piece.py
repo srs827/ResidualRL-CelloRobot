@@ -70,6 +70,7 @@ def build_env(args) -> PieceResidualEnv:
         scorer=scorer,
         tempo_scale=args.tempo_scale,
         bowing_rule=args.bowing,
+        calibrated_dynamics=args.calibrated_dynamics,
     )
 
 
@@ -88,6 +89,7 @@ class EpisodeQualityLogger:
 
     def __init__(self):
         self.history: list[float] = []
+        self.dynamics: list[float] = []
         self._warned_flat = False
 
     def __call__(self, locals_, globals_):   # SB3 callback signature
@@ -98,8 +100,14 @@ class EpisodeQualityLogger:
             self.history.append(info["mean_quality"])
             n = len(self.history)
             recent = float(np.mean(self.history[-10:]))
+            extra = ""
+            if "mean_dynamic" in info:
+                self.dynamics.append(info["mean_dynamic"])
+                extra = (f"   dyn {info['mean_dynamic']:.3f} "
+                         f"(last-10 {float(np.mean(self.dynamics[-10:])):.3f}, "
+                         f"in-zone {info.get('in_zone', '?')})")
             print(f"[episode {n:4d}] mean tone quality "
-                  f"{info['mean_quality']:.3f}   (last-10 avg {recent:.3f})")
+                  f"{info['mean_quality']:.3f}   (last-10 avg {recent:.3f}){extra}")
 
             if not self._warned_flat and "episode_log" in info:
                 scores = [s["quality"] for s in info["episode_log"]]
@@ -135,6 +143,12 @@ def main(argv=None):
     parser.add_argument("--bowing", default=None,
                         help="bowing rule when the score has none, "
                              "e.g. rule-of-downbow")
+    parser.add_argument("--calibrated-dynamics", action="store_true", default=True,
+                        help="aim each dynamic at its measured loudness zone by "
+                             "inverting the fitted loudness model (default on)")
+    parser.add_argument("--no-calibrated-dynamics", action="store_false",
+                        dest="calibrated_dynamics",
+                        help="use the planner's open-loop volume->speed rule instead")
     parser.add_argument("--resume", default=None,
                         help="checkpoint path (without .zip) to resume from")
     parser.add_argument("--save-dir", default=str(REPO_ROOT / "rl" / "checkpoints_piece"))
@@ -142,7 +156,9 @@ def main(argv=None):
                         help="steps between checkpoints "
                              "(default: 5000 mock, 250 real)")
     parser.add_argument("--audio-device", default=None)
-    parser.add_argument("--audio-channel", type=int, default=1)
+    parser.add_argument("--audio-channel", type=int, default=0,
+                        help="1-based input to record; 0 (default) probes the "
+                             "device and picks the channel carrying signal")
     parser.add_argument("--save-stroke-audio", action="store_true",
                         help="keep every stroke's classifier window as a wav "
                              "(builds a dataset for retraining the classifier)")

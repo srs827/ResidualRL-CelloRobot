@@ -164,6 +164,30 @@ W_SMOOTH  = 0.10
 # A dynamic error of this many dB zeroes the dynamic reward term.
 DYNAMIC_FULL_ERR_DB = 3.0
 
+# The classifier scores a fixed 0.5 s window (SoundClassifier's convention, and
+# what dataset_a_final's sustained full-bow strokes filled). A note SHORTER
+# than that cannot fill it: the rest of the window is neighbouring notes and
+# silence, which the model never saw in training. Scoring an 0.08 s note this
+# way is mostly measuring its neighbours.
+#
+# So the tone term is shrunk toward neutral in proportion to how much of the
+# window the note actually occupies:
+#
+#     quality_eff = 0.5 + fill * (quality - 0.5),   fill = min(1, dur / 0.5)
+#
+# A full-length note is unaffected (fill=1). An 0.08 s note contributes ~0.16
+# of its deviation, so it can neither reward nor punish the policy much on
+# evidence that is mostly not about it. Reward SCALE is unchanged, so returns
+# stay comparable across pieces; only the misleading gradient is removed. The
+# dynamic and bow terms are untouched — those are measured from motion, not
+# audio, and are perfectly valid on a short note.
+CLASSIFIER_WINDOW_SEC = 0.5
+
+# The acceleration ceiling solve_stroke plans against. Used to work out the
+# fastest MEAN speed a note of a given duration can reach (accel_max*T/4), so
+# the dynamic target is never set beyond what physics allows.
+ACCEL_MAX_FOR_DYNAMICS = PMP.ACCEL_MAX
+
 OBS_DIM = 18
 ACTION_DIM = 2      # [speed residual, depth residual], each in [-1, 1]
 
@@ -199,6 +223,10 @@ class StrokeResult:
     physical: np.ndarray            # (6,) in dataset.PHYSICAL_FEATURE_NAMES order
     measured_mean_speed: float
     achieved_u_end: float
+    # RMS level of the RAW stroke capture, before peak normalisation. This is
+    # what closes the dynamics loop acoustically; None in mock mode without a
+    # loudness model, in which case the reward falls back to the speed proxy.
+    measured_dbfs: float | None = None
 
 
 class ExecutorBase:
@@ -229,6 +257,14 @@ class MockExecutor(ExecutorBase):
     def __init__(self, noise: float = 0.02, rng: np.random.Generator | None = None):
         self.noise = noise
         self.rng = rng or np.random.default_rng()
+        # Synthesize a level from the fitted loudness model so the closed-loop
+        # dynamics reward can be exercised without the robot. Optional: without
+        # the model the env falls back to the bow-speed proxy.
+        try:
+            from rl.loudness import get_model
+            self._loudness = get_model()
+        except FileNotFoundError:
+            self._loudness = None
 
     def execute(self, stroke: ExecStroke) -> StrokeResult:
         n = lambda s: 1.0 + self.noise * self.rng.standard_normal() * s
@@ -239,11 +275,19 @@ class MockExecutor(ExecutorBase):
         physical = np.array([
             stroke.depth, 0.0, mean_speed, mid_u, torque, torque * 1.3,
         ], dtype=np.float32)
+        dbfs = None
+        if self._loudness is not None:
+            # Model prediction plus its own residual scatter, so the mock is
+            # no more precise than the real measurement it stands in for.
+            dbfs = (self._loudness.predict_dbfs(mean_speed, stroke.depth)
+                    + self._loudness.residual_sd_db * self.rng.standard_normal())
+
         return StrokeResult(
             audio=None,
             physical=physical,
             measured_mean_speed=mean_speed,
             achieved_u_end=stroke.u_end,
+            measured_dbfs=dbfs,
         )
 
 
@@ -279,8 +323,19 @@ class MockScorer:
 # means here. The human-annotated checkpoint (399 ratings from 2 annotators,
 # recording-level Spearman rho 0.70) is the honest reward signal, so it is
 # preferred when present.
-HUMAN_CHECKPOINT = (REPO_ROOT / "SoundClassifier" / "checkpoints"
-                    / "quality_cnn_human_current.pt")
+#
+# Preference order, best first: the A1-A5 model is trained on all five
+# annotators (500 recordings, 999 ratings, 499 of them double-rated) and beats
+# the two-annotator model on every headline metric — recording-level Spearman
+# 0.798 vs 0.702, val MSE 0.0242 vs 0.0355 — including 0.847 on the 'standard'
+# bow config, which is the one CONFIG_NAME selects and therefore the only one
+# the RL ever plays in.
+HUMAN_CHECKPOINTS = [
+    REPO_ROOT / "SoundClassifier" / "checkpoints" / "quality_cnn_human_A1_A5.pt",
+    REPO_ROOT / "SoundClassifier" / "checkpoints" / "quality_cnn_human_current.pt",
+]
+HUMAN_CHECKPOINT = next((p for p in HUMAN_CHECKPOINTS if p.exists()),
+                        HUMAN_CHECKPOINTS[-1])
 
 
 class RealScorer:
@@ -333,8 +388,58 @@ class RealScorer:
 # Score loading + baseline planning
 # ══════════════════════════════════════════════════════════════════
 
+def calibrate_dynamics(notes) -> dict:
+    """
+    Re-aim every note at the loudness its dynamic is supposed to produce.
+
+    The planner turns a written dynamic into a bow speed with
+    volume_to_speed(), a linear rule across an absolute ppp..fff axis. Real
+    music lives between p and f, the middle 43% of that axis, so a p..f piece
+    asks for 0.138..0.206 m/s -- 3.5 dB, which is audibly no dynamics at all.
+    Worse, it is open-loop: measured against the fitted model, the baseline
+    plays p about 3 dB too loud.
+
+    This inverts the loudness model instead: for each note, take the centre of
+    its dynamic's zone, solve for the bow speed that actually produces that
+    level, and rewrite the note's volume so the planner's own machinery
+    (bow budgeting, stroke solving, swells) produces it. p..f then spans the
+    full ~10 dB the instrument can reach rather than 3.5 dB.
+
+    This is FEED-FORWARD -- it aims correctly before the stroke. The RL
+    residual then only has to correct what the model got wrong, rather than
+    discover the whole speed->loudness mapping from scratch.
+    """
+    from rl.loudness import get_model
+    model = get_model()
+
+    # The planner derives BOTH speed and depth from `volume`, so re-aiming
+    # volume at a speed target drags depth along with it. Measured on t1 that
+    # put 7 of 25 strokes into slow-bow-AND-light-depth simultaneously -- the
+    # corner expand_dynamic_range()'s docstring warns is "where the string
+    # stops speaking cleanly... thin and unsteady rather than soft". Depth is
+    # worth only ~0.42 dB/mm by the fit, so it is a poor dynamic lever anyway.
+    # Keep the original volumes for depth and let speed carry the dynamics.
+    original_volumes = [float(n.volume) for n in notes]
+
+    changed = 0
+    for note in notes:
+        zone = model.zone_for_dynamic(note.dynamic)
+        target_speed = model.invert_speed(model.zone_centre(zone))
+        volume = PMP.speed_to_volume(target_speed)
+        if abs(volume - note.volume) > 1e-6:
+            changed += 1
+        # Keep any within-note swell by shifting its end by the same amount.
+        if note.volume_end is not None:
+            note.volume_end = float(np.clip(
+                note.volume_end + (volume - note.volume), 0.0, 1.0))
+        note.volume = volume
+    return {"calibrated": True, "notes_reaimed": changed,
+            "original_volumes": original_volumes}
+
+
 def load_piece(path: str, tempo_scale: float = 1.0,
-               bowing_rule: str | None = None):
+               bowing_rule: str | None = None,
+               calibrated_dynamics: bool = False):
     """
     Parse a piece the same way play_midi_pieces.py does and plan it.
 
@@ -352,6 +457,11 @@ def load_piece(path: str, tempo_scale: float = 1.0,
         PMP.assign_bowings(notes, bowing_rule)
 
     notes, n_merged, n_portato = PMP.merge_slurs(notes)
+
+    # AFTER merging, so original_volumes is indexed the same way the planner's
+    # stroke.note_index will be.
+    if calibrated_dynamics:
+        meta["dynamics_calibration"] = calibrate_dynamics(notes)
     meta["n_slurs_merged"] = n_merged
     meta["dynamics"] = PMP.describe_dynamic_range(notes)
 
@@ -402,7 +512,8 @@ class PieceResidualEnv(gym.Env):
     def __init__(self, piece_path: str, executor: ExecutorBase | None = None,
                  scorer=None, tempo_scale: float = 1.0,
                  bowing_rule: str | None = None, ema_alpha: float = 0.7,
-                 string: str = "A"):
+                 string: str = "A", closed_loop_dynamics: bool = True,
+                 calibrated_dynamics: bool = False):
         super().__init__()
         self.piece_path = str(piece_path)
         self.executor = executor or MockExecutor()
@@ -410,10 +521,31 @@ class PieceResidualEnv(gym.Env):
         self.string = string
         self.ema_alpha = ema_alpha
 
+        # Closed-loop dynamics need the fitted loudness model. Absent, the
+        # reward silently falls back to the bow-speed proxy -- say so, rather
+        # than let a run quietly grade dynamics the old way.
+        self.loudness = None
+        if closed_loop_dynamics:
+            try:
+                from rl.loudness import get_model
+                self.loudness = get_model()
+                print(f"Dynamics: closed loop on measured dBFS "
+                      f"(zones from {self.loudness.path.name}, "
+                      f"residual sd {self.loudness.residual_sd_db:.2f} dB)")
+            except FileNotFoundError as e:
+                print(f"Dynamics: OPEN loop on bow speed -- {e}")
+
         self.notes, self.meta, self.plan = load_piece(
-            piece_path, tempo_scale=tempo_scale, bowing_rule=bowing_rule)
+            piece_path, tempo_scale=tempo_scale, bowing_rule=bowing_rule,
+            calibrated_dynamics=calibrated_dynamics)
         if not self.plan:
             raise ValueError(f"{piece_path}: the planner produced no strokes")
+
+        # Depth stays on the ORIGINAL written dynamics even when speed has
+        # been re-aimed, so calibration cannot drag quiet notes into the
+        # slow-and-light corner where the string stops speaking.
+        cal = self.meta.get("dynamics_calibration") or {}
+        self._depth_volumes = cal.get("original_volumes")
 
         self.observation_space = spaces.Box(-np.inf, np.inf, (OBS_DIM,),
                                             dtype=np.float32)
@@ -448,7 +580,14 @@ class PieceResidualEnv(gym.Env):
             u_start = s.u_start
 
         speed_scale = 1.0 + float(action[0]) * SPEED_RESIDUAL_FRAC
-        depth = float(np.clip(s.depth + float(action[1]) * DEPTH_RESIDUAL_M,
+
+        # Base depth: the planner's, unless dynamics were re-aimed -- then use
+        # the depth the ORIGINAL written dynamic implies, so speed carries the
+        # dynamics and depth keeps its musical shaping.
+        base_depth = s.depth
+        if self._depth_volumes and s.note_index < len(self._depth_volumes):
+            base_depth = PMP.volume_to_depth(self._depth_volumes[s.note_index])
+        depth = float(np.clip(base_depth + float(action[1]) * DEPTH_RESIDUAL_M,
                               DEPTH_LO, DEPTH_HI))
 
         desired = s.length * speed_scale
@@ -514,13 +653,48 @@ class PieceResidualEnv(gym.Env):
                                           window_pos=window_pos,
                                           string=self.string))
 
-        # Dynamic accuracy: achieved mean speed vs what the SCORE asked for
-        # (the plan's own volume_actual may already be shaded by the planner;
-        # the score's volume_target is the ground truth).
-        target_speed = PMP.volume_to_speed(plan_stroke.volume_target)
-        err_db = abs(20.0 * np.log10(
-            max(result.measured_mean_speed, 1e-3) / max(target_speed, 1e-3)))
-        r_dynamic = float(np.clip(1.0 - err_db / DYNAMIC_FULL_ERR_DB, 0.0, 1.0))
+        # Shrink toward neutral when the note is too short to fill the
+        # classifier's window (see CLASSIFIER_WINDOW_SEC).
+        fill = float(np.clip(exec_stroke.duration / CLASSIFIER_WINDOW_SEC,
+                             0.0, 1.0))
+        quality_eff = 0.5 + fill * (quality - 0.5)
+
+        # Dynamic accuracy: achieved mean speed vs what the score asked for --
+        # but capped at what the note's DURATION physically allows.
+        #
+        # Covering length L in T seconds needs accel >= 4L/T^2, so the longest
+        # stroke that fits is L = accel_max*T^2/4 and the fastest achievable
+        # MEAN speed is L/T = accel_max*T/4. A 0.08 s note therefore tops out
+        # near 0.08 m/s however loud the score marks it; solve_stroke already
+        # shortens the stroke rather than miss the beat.
+        #
+        # Grading against the written dynamic anyway punished the policy by up
+        # to 8 dB for the planner's physical limit -- a penalty no residual
+        # could ever remove, so it was pure noise in the objective. Grade
+        # against the best the note can actually do.
+        written_speed = PMP.volume_to_speed(plan_stroke.volume_target)
+        achievable_speed = ACCEL_MAX_FOR_DYNAMICS * exec_stroke.duration / 4.0
+        target_speed = min(written_speed, achievable_speed)
+
+        zone = None
+        if self.loudness is not None and result.measured_dbfs is not None:
+            # CLOSED LOOP: grade the level the instrument actually produced
+            # against the zone this dynamic belongs in. Bow speed was only ever
+            # a proxy for loudness, and an imperfect one -- it ignores how
+            # depth, bow position and the state of the rosin change the
+            # speed->level transfer. This measures the thing we actually care
+            # about.
+            zone = self.loudness.zone_for_dynamic(plan_stroke.dynamic)
+            r_dynamic = self.loudness.zone_reward(result.measured_dbfs, zone)
+            lo, hi = self.loudness.zone_bounds(zone)
+            centre = (lo + hi) / 2.0
+            err_db = float(result.measured_dbfs - centre)
+        else:
+            # OPEN LOOP fallback: no microphone or no fitted model, so infer
+            # loudness from bow speed as before.
+            err_db = abs(20.0 * np.log10(
+                max(result.measured_mean_speed, 1e-3) / max(target_speed, 1e-3)))
+            r_dynamic = float(np.clip(1.0 - err_db / DYNAMIC_FULL_ERR_DB, 0.0, 1.0))
 
         # Bow budget: cutting a stroke short, or parking near a hard limit,
         # is the residual policy's fault — the baseline plan always fits.
@@ -532,12 +706,18 @@ class PieceResidualEnv(gym.Env):
 
         r_smooth = -0.5 * float(np.mean(np.abs(action - self._prev_action)))
 
-        total = (W_QUALITY * quality + W_DYNAMIC * r_dynamic
+        total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
                  + W_BOW * r_bow + W_SMOOTH * r_smooth)
         components = {
-            "quality": quality, "r_dynamic": r_dynamic, "r_bow": r_bow,
+            # `quality` stays the RAW classifier score so logs and the
+            # episode summary report what was actually heard; quality_eff is
+            # what the policy is graded on.
+            "quality": quality, "quality_eff": quality_eff,
+            "window_fill": fill,
+            "r_dynamic": r_dynamic, "r_bow": r_bow,
             "r_smooth": r_smooth, "err_db": float(err_db),
             "shortfall": shortfall, "total": float(total),
+            "zone": zone, "dbfs": result.measured_dbfs,
         }
         return float(total), components
 
@@ -639,6 +819,12 @@ class PieceResidualEnv(gym.Env):
             info["episode_log"] = self._episode_log
             info["mean_quality"] = float(np.mean(
                 [s["quality"] for s in self._episode_log]))
+            # Dynamics is half the objective, so report it alongside tone --
+            # a run optimising dynamics is otherwise invisible in the log.
+            info["mean_dynamic"] = float(np.mean(
+                [s["r_dynamic"] for s in self._episode_log]))
+            in_zone = [s for s in self._episode_log if s["r_dynamic"] >= 0.999]
+            info["in_zone"] = f"{len(in_zone)}/{len(self._episode_log)}"
 
         return self._obs(), reward, terminated, False, info
 
