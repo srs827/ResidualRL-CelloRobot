@@ -75,6 +75,20 @@ class LoudnessModel:
         self.residual_sd_db = float(data["fit"]["residual_sd_db"])
         self.speed_min, self.speed_max = data["speed_range"]
         self.path = path
+        # Microphone gain offset, in dB, between the rig that recorded
+        # dataset_a_final and the rig measuring now.
+        #
+        # The zones are ABSOLUTE dBFS, so any change of interface, gain knob or
+        # mic position shifts every measurement bodily and no stroke can land
+        # in a zone. Measured on 2026-08-11 the current setup reads +4.20 dB
+        # hotter than the fit: strokes came in at -17.6 dBFS against a
+        # predicted -21.8, which is above even the `f` ceiling of -18.71 — so
+        # the dynamics reward was a constant zero and 0/14 strokes were in
+        # zone. That is not a low score, it is a dead term.
+        #
+        # Re-measure with calibrate_gain_offset() whenever the audio path
+        # changes. It is a property of the microphone, not of the playing.
+        self.gain_offset_db = float(data.get("gain_offset_db", 0.0))
 
     # ── forward / inverse ────────────────────────────────────────
 
@@ -119,6 +133,8 @@ class LoudnessModel:
         rewarding measurement noise, and would also punish the tone-driven
         micro-adjustments the policy is supposed to be free to make.
         """
+        # Bring the measurement into the model's frame before comparing.
+        measured_dbfs = measured_dbfs - self.gain_offset_db
         lo, hi = self.zone_bounds(zone)
         if lo <= measured_dbfs <= hi:
             return 1.0

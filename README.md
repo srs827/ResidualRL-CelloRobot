@@ -87,6 +87,16 @@ commands require the lab network and a correctly configured UR controller;
 run hardware-free validation first and review the taught poses and safety
 limits before enabling motion.
 
+## Documentation
+
+- [RL_METHOD.md](RL_METHOD.md): full technical description of the residual RL
+  loop — MDP formulation, state and action spaces, the reward function term by
+  term, the classifier used as reward model, SAC hyperparameters, measured
+  results, and limitations. Written as a methods reference.
+- [PIPELINE.md](PIPELINE.md): system architecture, the three RL environments,
+  and the score → planner → robot → audio → reward data path.
+- [RESULTS.md](RESULTS.md): measured outcomes and evaluation protocol.
+
 ## Repository map
 
 - `rl/`: Gymnasium environments, whole-piece SAC training, and playback.

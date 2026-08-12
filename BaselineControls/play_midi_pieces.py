@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# rhythm section 
+# slightly slower tempo 
+
+# increase bow speed and make the bow lighter and reduce tension at the end of the bow 
+# use slightly more bow less weight
+
 """
 play_midi_pieces.py
 
@@ -204,10 +211,18 @@ def _load_recording_module():
     try:
         spec.loader.exec_module(module)
     except ImportError as e:
+        # NOTE: the interpreter named here used to be .venv311, which now lives
+        # in an iCloud-synced directory and had its 60k files evicted — it can
+        # no longer import anything. ~/venvs/cello311 is the working
+        # environment (outside iCloud, with ur_rtde 1.6.3 built against
+        # boost@1.85). Pointing at the dead one sent people in circles.
         raise ImportError(
             f"Could not import recording_a_only ({e}).\n"
-            f"It pulls in ur_rtde, sounddevice and soundfile. Run this script with\n"
-            f"  {REPO_ROOT}/.venv311/bin/python {Path(__file__).name} ...\n"
+            f"It pulls in mido, ur_rtde, sounddevice and soundfile. "
+            f"Run this script with\n"
+            f"  ~/venvs/cello311/bin/python "
+            f"BaselineControls/{Path(__file__).name} ...\n"
+            f"(NOT .venv or .venv311 — those lack the dependencies.)\n"
         ) from e
     return module
 
@@ -666,6 +681,23 @@ ARTICULATION_DURATION = {
     "tenuto":          0.95,   # full length, the merest lift
 }
 
+# Note length at and above which a written articulation is taken literally.
+#
+# Applied as a flat fraction, staccato removes 45% of EVERY marked note however
+# short. On challengepiece's 0.25 s staccato eighths that is 112 ms of silence
+# — the notes come out as detached blips next to a fully sustained quarter, and
+# the pulse reads as uneven rather than articulated.
+#
+# Players do not work that way. Separation is closer to absolute than
+# proportional: as the notes get faster the dot becomes an accent, not a gap.
+# So the silence a mark asks for is scaled by duration/ARTICULATION_REF, capped
+# at 1. A 0.5 s staccato quarter is unchanged (0.55 as written); a 0.25 s
+# eighth keeps ~78% of its length instead of 55%.
+#
+# Raise it to detach short notes more, lower it toward 0 to take every mark
+# literally (the previous behaviour). Exposed as --articulation-ref.
+ARTICULATION_REF = 0.5
+
 
 @dataclass
 class ScoreNote:
@@ -690,6 +722,11 @@ class ScoreNote:
     measure: int = 0
     beat: float = 0.0                  # position within the measure, in beats
     is_strong_beat: bool = False
+    # Per-note depth override, in metres, from --annotations. Depth is normally
+    # derived from volume, which means it cannot be adjusted without also
+    # changing the loudness. Set here it wins outright, so a note can be
+    # lightened for tone without being made quieter.
+    depth_override: float | None = None
 
     @property
     def end(self) -> float:
@@ -1400,6 +1437,12 @@ def load_annotations(path: str, notes: list[ScoreNote]) -> int:
             note.bow_dir = bow
             note.bow_dir_source = "annotation"
 
+        if "depth_mm" in entry:
+            # Signed, same convention as the recording script: negative is
+            # outward/lighter, positive presses in. Clamped by apply_depth()
+            # to the safety envelope regardless of what is written here.
+            note.depth_override = float(entry["depth_mm"]) / 1000.0
+
         if "volume" in entry:
             note.volume = _parse_volume(entry["volume"])
             note.volume_source = "annotation"
@@ -1492,7 +1535,8 @@ def portato_groups(notes: list[ScoreNote]) -> set:
             and (note.articulations & SEPARATING_ARTICULATIONS)}
 
 
-def merge_slurs(notes: list[ScoreNote]) -> tuple[list[ScoreNote], int, int]:
+def merge_slurs(notes: list[ScoreNote],
+                merge: bool = True) -> tuple[list[ScoreNote], int, int]:
     """
     Collapse each LEGATO slur group into one sustained note.
 
@@ -1515,6 +1559,15 @@ def merge_slurs(notes: list[ScoreNote]) -> tuple[list[ScoreNote], int, int]:
         return notes, 0, 0
 
     separated = portato_groups(notes)
+
+    # merge=False treats EVERY slur as portato: the notes stay separate and the
+    # planner still holds them to one bow direction. The merging default argues
+    # that on an open A a plain slur is one continuous sound, which is true of
+    # the sound but throws the written note away — a slur ending on a short
+    # note loses that note entirely. When the score's articulation matters more
+    # than the letter of the legato, this keeps it. See --no-merge-slurs.
+    if not merge:
+        separated = {note.slur_id for note in notes if note.slur_id is not None}
 
     merged: list[ScoreNote] = []
     merged_groups: set = set()
@@ -1626,10 +1679,16 @@ class BowPlanner:
                  accel_max: float = ACCEL_MAX,
                  retake_speed: float = RETAKE_SPEED,
                  retake_accel: float = None,
-                 lookahead: bool = True):
+                 lookahead: bool = True,
+                 articulation_ref: float = ARTICULATION_REF,
+                 depth_offset: float = 0.0,
+                 speed_scale: float = 1.0):
         retake_accel = MOVE_ACCEL if retake_accel is None else retake_accel
         self.u = float(np.clip(start_u, U_MIN, U_MAX))
         self.enable_swell = enable_swell
+        self.articulation_ref = articulation_ref
+        self.depth_offset = depth_offset
+        self.speed_scale = speed_scale
         self.accel_max = accel_max
         self.retake_speed = retake_speed
         self.retake_accel = retake_accel
@@ -1648,6 +1707,24 @@ class BowPlanner:
     @staticmethod
     def _sign(direction: str) -> float:
         return 1.0 if direction == "down" else -1.0
+
+    def _depth_for(self, volume: float) -> float:
+        """
+        Depth for a volume, plus the global --depth-offset trim.
+
+        Depth is normally a pure function of volume, which makes the whole
+        piece's contact weight a consequence of its dynamics: a piece marked pp
+        throughout sits at -0.96 mm everywhere, slow bow AND light depth at
+        once. That corner is where the string stops speaking, so being able to
+        lean the whole piece in or out without rewriting its dynamics is worth
+        a knob.
+
+        A per-note depth_mm annotation is NOT shifted by this — an explicit
+        value means exactly what it says. Clamped to the same safety envelope
+        apply_depth() enforces, so the printed plan shows what will be sent.
+        """
+        return float(np.clip(volume_to_depth(volume) + self.depth_offset,
+                             -MAX_OUTWARD_DEPTH, MAX_INWARD_DEPTH))
 
     def _available(self, u: float, direction: str) -> float:
         """Metres of bow left from u in `direction` before the hard margin."""
@@ -1896,7 +1973,12 @@ class BowPlanner:
         marks = [ARTICULATION_DURATION[a] for a in note.articulations
                  if a in ARTICULATION_DURATION]
         if marks:
-            duration = note.duration * min(marks)
+            # Scale the silence the mark asks for by how long the note is, so
+            # fast notes are articulated rather than chopped (ARTICULATION_REF).
+            silence = note.duration * (1.0 - min(marks))
+            if self.articulation_ref > 0.0:
+                silence *= min(1.0, note.duration / self.articulation_ref)
+            duration = note.duration - silence
 
         return duration
 
@@ -1927,7 +2009,15 @@ class BowPlanner:
                 planned_reset = (from_u, seconds)
                 partial_reset = partial
 
-        target_speed = volume_to_speed(budget_volume)
+        # speed_scale trades bow budget for tone. Amplitude is proportional to
+        # bow speed and depth is worth under 1 dB, so a given loudness can be
+        # made with a fast light bow or a slow heavy one — and the fast light
+        # one sounds clearer. Scaling here raises the speed AND the bow used,
+        # because length = speed x duration and the rhythm is fixed. The cost
+        # is the bow budget: every stroke eats more hair, so retakes, flips and
+        # dynamic shortfalls all become more likely. Pair it with a negative
+        # --depth-offset to keep the loudness roughly where the score asked.
+        target_speed = volume_to_speed(budget_volume) * self.speed_scale
         want_length = target_speed * duration
 
         # Longer than the whole bow at the dynamic the music asks for: no
@@ -2066,7 +2156,8 @@ class BowPlanner:
         # Depth follows the level the stroke actually delivers, so a stroke
         # that had to be shortened is not left pressing as if it were still
         # loud. Swelling strokes override this per segment in _build_segments.
-        depth = volume_to_depth(budget_volume)
+        depth = (note.depth_override if note.depth_override is not None
+                 else self._depth_for(budget_volume))
         stroke = Stroke(
             note_index=note.index,
             onset=note.onset,
@@ -2237,7 +2328,7 @@ class BowPlanner:
             segments.append(Segment(
                 u_start=u, u_end=u_next,
                 speed=sub.speed, accel=sub.accel,
-                depth=volume_to_depth(volume), duration=sub.duration,
+                depth=self._depth_for(volume), duration=sub.duration,
             ))
             u = u_next
 
@@ -2383,7 +2474,7 @@ def print_plan(strokes: list[Stroke], notes: list[ScoreNote], meta: dict):
 # step back from the instrument and let the room settle, and it sits INSIDE the
 # recording, so every take carries a noise-floor reference ahead of the music
 # and the input stream is demonstrably running before anything sounds.
-LEAD_IN_SEC = 30.0
+LEAD_IN_SEC = 0.0
 
 # Inherited from recording_a_only rather than duplicated, the same way the
 # waypoints and depth convention are, so the performance script and the data
@@ -2412,11 +2503,35 @@ class PiecePlayer:
     def __init__(self, record_audio: bool = False, output_dir: Path | None = None,
                  retake_speed: float = RETAKE_SPEED,
                  retake_accel: float = MOVE_ACCEL,
-                 audio_device=None, audio_channel: int = 1):
+                 audio_device=None, audio_channel: int = 1,
+                 servo: bool = False, servo_threshold: float = None,
+                 servo_lookahead: float = None):
         from BaselineControls.baseline_controller import TargetStringBaselineController
 
         self.controller = TargetStringBaselineController([])
         _rec.apply_verified_installation(self.controller)
+
+        # Hybrid execution. Off by default: the moveL path is the verified one,
+        # and servoL only wins on notes long enough to shape.
+        self.servo = None
+        self.servo_mod = None
+        self.servo_threshold = 0.0
+        self.servo_log: list[dict] = []
+        if servo:
+            import importlib.util as _il
+            _spec = _il.spec_from_file_location(
+                "servo_player", Path(__file__).parent / "servo_player.py")
+            self.servo_mod = _il.module_from_spec(_spec)
+            _spec.loader.exec_module(self.servo_mod)
+            self.servo_threshold = (self.servo_mod.HYBRID_THRESHOLD
+                                    if servo_threshold is None else servo_threshold)
+            self.servo = self.servo_mod.ServoStrokePlayer(
+                self.controller, sys.modules[__name__],
+                lookahead=(self.servo_mod.SERVO_LOOKAHEAD
+                           if servo_lookahead is None else servo_lookahead))
+            print(f"Hybrid execution: servoL for notes >= {self.servo_threshold:.2f}s, "
+                  f"moveL below (lookahead {self.servo.lookahead:.3f}s, "
+                  f"accel limit {self.servo.accel_limit:.1f})")
 
         self.rtde_c = self.controller.rtde_c
         self.rtde_r = self.controller.rtde_r
@@ -2473,7 +2588,17 @@ class PiecePlayer:
         recording stroke. Several segments (a swell) go out as one blended
         moveL path so the bow does not stop between them and the note stays a
         single sound.
+
+        With --servo, notes at or above the hybrid threshold are STREAMED with
+        servoL instead, so their speed and depth can be changed while they
+        sound. Short notes stay on moveL, where the controller plans the whole
+        trapezoid itself and measurably tracks better — see servo_player's
+        HYBRID_THRESHOLD for the numbers.
         """
+        if self.servo is not None and stroke.duration >= self.servo_threshold:
+            self._play_servo(stroke)
+            return
+
         if len(stroke.segments) == 1:
             segment = stroke.segments[0]
             target = apply_depth(pose_at(segment.u_end), CFG, segment.depth)
@@ -2487,7 +2612,15 @@ class PiecePlayer:
             length = abs(segment.u_end - segment.u_start) * BOW_LENGTH
             # Blend must stay well under half a segment, and the last one must
             # be zero so the stroke actually stops where it is supposed to.
-            blend = 0.0 if i == len(stroke.segments) - 1 else min(0.3 * length, 0.005)
+            #
+            # The 0.3*length term already protects short segments; the absolute
+            # cap is what decides whether an interior junction is a genuine
+            # transition or a rounded-off stop. At the old 5 mm, a ~56 mm RL
+            # envelope segment blended over 9% of its length and the bow still
+            # slowed to near zero twice per note -- audible as the note
+            # breaking into pieces. 25 mm lets the controller carry velocity
+            # through the junction, which is the whole point of the envelope.
+            blend = 0.0 if i == len(stroke.segments) - 1 else min(0.3 * length, 0.025)
             path.append(list(pose) + [segment.speed, segment.accel, blend])
 
         try:
@@ -2498,6 +2631,59 @@ class PiecePlayer:
         if ok is False:
             raise RobotFaultStop(
                 f"blended moveL returned False on note {stroke.note_index}. STOPPING.")
+
+    def _play_servo(self, stroke: Stroke):
+        """
+        Stream one long note with servoL, rendering any swell as a schedule of
+        setpoint changes rather than a pre-blended path.
+
+        This is where the servo path earns its place: the SAME mechanism a
+        policy would use to react mid-note is used here to render the swell the
+        score asked for. A blended moveL can only follow a shape decided before
+        the stroke began; a setpoint can be rewritten while the note sounds.
+
+        The scheduler runs on its own thread because the control loop must not
+        block — a stalled tick is audible.
+        """
+        import threading as _threading
+
+        segments = stroke.segments
+        first = segments[0]
+        span = abs(first.u_end - first.u_start) * BOW_LENGTH
+        setpoint = self.servo_mod.Setpoint(
+            speed=span / first.duration if first.duration > 0 else stroke.mean_speed,
+            depth=first.depth)
+
+        stop = _threading.Event()
+
+        def schedule():
+            # Walk the remaining segments in time, writing each one's mean
+            # speed and depth as it becomes current.
+            elapsed = first.duration
+            for seg in segments[1:]:
+                if stop.wait(elapsed):
+                    return
+                length = abs(seg.u_end - seg.u_start) * BOW_LENGTH
+                setpoint.write(
+                    speed=length / seg.duration if seg.duration > 0 else None,
+                    depth=seg.depth)
+                elapsed = seg.duration
+
+        worker = None
+        if len(segments) > 1:
+            worker = _threading.Thread(target=schedule, daemon=True)
+            worker.start()
+
+        try:
+            result = self.servo.play_stroke(
+                stroke.u_start, stroke.direction, stroke.duration, setpoint,
+                u_limit=stroke.u_end)
+        finally:
+            stop.set()
+            if worker is not None:
+                worker.join(timeout=0.2)
+
+        self.servo_log.append({"note_index": stroke.note_index, **result})
 
     # ── the performance ──────────────────────────────────────────
 
@@ -2732,7 +2918,8 @@ def build_score(args) -> tuple[list[ScoreNote], dict]:
                         else describe_dynamic_range(notes))
 
     assign_bowings(notes, args.bowing)
-    notes, n_merged, n_portato = merge_slurs(notes)
+    notes, n_merged, n_portato = merge_slurs(
+        notes, merge=not getattr(args, "no_merge_slurs", False))
     meta["n_slurs_merged"] = n_merged
     meta["n_portato_groups"] = n_portato
     meta["n_notes"] = len(notes)
@@ -2823,6 +3010,60 @@ def main(argv=None):
                              "covering L metres in T seconds needs 4L/T^2, so "
                              "raising it is what lets fast notes keep their "
                              "dynamic. Raise it in small steps and listen")
+    parser.add_argument("--servo", action="store_true",
+                        help="HYBRID execution: stream long notes with servoL "
+                             "so their speed and depth can change mid-note, "
+                             "keeping moveL for short ones. Measured in air, "
+                             "servoL tracks to -4%% at 1.0s and -8%% at 0.5s but "
+                             "degrades below that, so the split is a win on "
+                             "both sides. Off by default — moveL is the "
+                             "verified path")
+    parser.add_argument("--servo-threshold", type=float, default=None,
+                        metavar="SEC",
+                        help="note length at and above which --servo streams "
+                             "(default: 0.5). Note a correction based on the "
+                             "note's own sound cannot land before ~0.6s, so "
+                             "notes under ~1s cannot really be reacted to")
+    parser.add_argument("--servo-lookahead", type=float, default=None,
+                        metavar="SEC",
+                        help="servoL lookahead_time (default: 0.10). Measured "
+                             "0.03 tracks markedly better: the bow lags by "
+                             "about speed x lookahead of distance")
+    parser.add_argument("--speed-scale", type=float, default=1.0,
+                        metavar="X",
+                        help="multiply every note's bow speed, and therefore "
+                             "the bow it uses, by this (default: 1.0). Faster "
+                             "and lighter is the clearer way to make a given "
+                             "loudness — the residual RL converged on exactly "
+                             "that (+25%% speed, lighter depth) — but each "
+                             "stroke then eats more hair, so watch the plan "
+                             "for retakes and shortfalls. Pair with a negative "
+                             "--depth-offset to hold the loudness steady")
+    parser.add_argument("--depth-offset", type=float, default=0.0,
+                        metavar="MM",
+                        help="shift every note's depth by this many mm, "
+                             "negative for lighter contact, positive to lean "
+                             "in (default: 0). Depth is otherwise a pure "
+                             "function of volume, so a piece marked pp "
+                             f"throughout sits near "
+                             f"{-MAX_OUTWARD_DEPTH*1000:+.1f}..{MAX_INWARD_DEPTH*1000:+.1f} mm "
+                             "with no way to trim it. Clamped to the safety "
+                             "envelope; per-note depth_mm annotations are NOT "
+                             "shifted")
+    parser.add_argument("--no-merge-slurs", action="store_true",
+                        help="keep slurred notes separate instead of collapsing "
+                             "each group into one sustained tone. They still "
+                             "share a bow direction (portato). Use when a slur "
+                             "ends on a short note and you want to hear that "
+                             "note rather than have it absorbed")
+    parser.add_argument("--articulation-ref", type=float,
+                        default=ARTICULATION_REF, metavar="SEC",
+                        help="note length at and above which a written "
+                             f"articulation is taken literally (default: "
+                             f"{ARTICULATION_REF}). Shorter notes get "
+                             "proportionally less separation, so fast staccato "
+                             "is articulated rather than chopped into blips. "
+                             "0 takes every mark literally at any tempo")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation prompt before playing")
     args = parser.parse_args(argv)
@@ -2844,7 +3085,10 @@ def main(argv=None):
                          accel_max=args.accel_max,
                          retake_speed=args.retake_speed,
                          retake_accel=args.retake_accel,
-                         lookahead=not args.no_lookahead)
+                         lookahead=not args.no_lookahead,
+                         articulation_ref=args.articulation_ref,
+                         depth_offset=args.depth_offset / 1000.0,
+                         speed_scale=args.speed_scale)
     strokes = planner.plan(notes)
     print_plan(strokes, notes, meta)
 
@@ -2893,7 +3137,10 @@ def main(argv=None):
                          retake_speed=args.retake_speed,
                          retake_accel=args.retake_accel,
                          audio_device=audio_device,
-                         audio_channel=audio_channel)
+                         audio_channel=audio_channel,
+                         servo=args.servo,
+                         servo_threshold=args.servo_threshold,
+                         servo_lookahead=args.servo_lookahead)
     try:
         player.prepare(strokes[0])
         input("\nPress ENTER to play (Ctrl+C to abort)...")

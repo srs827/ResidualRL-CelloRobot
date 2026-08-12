@@ -111,6 +111,24 @@ def compute_hnr(audio, sr=SR, frame_length=2048, hop_length=HOP_LENGTH,
     Returns (mean_db, std_db) over non-silent frames; (0.0, 0.0) if no
     voiced frames are found.
     """
+    # Note-matched analysis windows (rl/piece_hardware.py) can be shorter than
+    # one frame: a 0.111 s note in challengepiece arrives as ~1979 samples
+    # against frame_length 2048, and librosa.util.frame raises rather than
+    # padding. 79% of that piece is under 0.2 s, so this is the common case,
+    # not an edge case.
+    #
+    # Pad by reflection rather than shrinking frame_length: the classifier's
+    # hnr_db_mean was trained at 2048, and HNR computed over a different frame
+    # is not comparable to it -- silently shifting the feature distribution for
+    # exactly the short notes where the reward is already least reliable would
+    # be worse than the crash. Reflection preserves the periodicity the
+    # autocorrelation is measuring, where zero-padding would depress the peak
+    # and make a clean short note read as noisy.
+    if len(audio) < frame_length:
+        if len(audio) < 512:          # under ~2.5 periods of open A: nothing to measure
+            return 0.0, 0.0
+        audio = np.pad(audio, (0, frame_length - len(audio)), mode="reflect")
+
     frames = librosa.util.frame(audio, frame_length=frame_length, hop_length=hop_length).T
     window = np.hanning(frame_length)
 

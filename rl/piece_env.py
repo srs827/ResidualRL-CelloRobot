@@ -140,15 +140,26 @@ PMP = load_baseline_module()
 # Residual bounds
 # ══════════════════════════════════════════════════════════════════
 
-# ±20% on mean bow speed ≈ ±1.6 dB by the dataset_a_final calibration:
-# audible as shading, never as a wrong dynamic. Matches BOW_SLACK, the
-# planner's own bow-distribution allowance.
-SPEED_RESIDUAL_FRAC = 0.20
+# Bow speed residual, as a fraction of the planned mean speed.
+#
+# Was 0.20 (±1.6 dB), chosen to match the planner's BOW_SLACK so a residual
+# could never outrun the bow budget. That turned out to be too timid: the
+# instrument only spans 8.9 dB in total, real music sits in the middle of it,
+# and on t1 the dynamics term was near-saturated because the policy could not
+# move far enough to matter. ±35% is ±2.6 dB — still inside the calibrated
+# 0.09..0.25 m/s grid for any mid-range note, so the mapping stays
+# interpolation rather than extrapolation.
+#
+# The cost is bow budget: a 35% longer stroke eats 35% more hair, so expect
+# more DISTRIB/FLIP events. r_bow already prices that in.
+SPEED_RESIDUAL_FRAC = 0.35
 
-# ±0.5 mm of depth around the planned value, always re-clamped to the
-# recording script's safety envelope (-1.5 mm .. +2.0 mm). Depth is the
-# timbral knob: worth <1 dB of loudness but it changes how the string speaks.
-DEPTH_RESIDUAL_M = 0.0005
+# ±1.0 mm of depth around the planned value (was ±0.5). Depth is worth only
+# ~0.42 dB/mm so this is not a dynamics lever — it is the timbral one, and the
+# difference between a note that speaks and one that does not. Widening it
+# matters most on slow quiet notes, where more weight is the classical way to
+# keep the string speaking.
+DEPTH_RESIDUAL_M = 0.0010
 
 DEPTH_LO = -PMP.MAX_OUTWARD_DEPTH   # -1.5 mm (lighter)
 DEPTH_HI = PMP.MAX_INWARD_DEPTH     # +2.0 mm (heavier)
@@ -160,6 +171,71 @@ W_QUALITY = 0.50
 W_DYNAMIC = 0.25
 W_BOW     = 0.15
 W_SMOOTH  = 0.10
+
+# ── Multi-dimensional tone reward ─────────────────────────────────
+# The classifier predicts six human-rated dimensions but the reward only ever
+# used `overall`. That was measurably the wrong choice: on challengepiece,
+# `overall` ranked the runs almost exactly opposite to `tone_quality`, and
+# opposite to the ear.
+#
+#     run              overall   tone_quality
+#     original           0.838      0.389
+#     tempo fixed        0.684      0.736     <- ear preferred, tone agreed
+#
+# `attack_quality` moved the same way (0.22 -> 0.55) when the articulation was
+# fixed, so it is carrying real signal about exactly the harsh bow changes the
+# reward was blind to. Weights sum to 1.0 and are applied to whichever heads
+# the checkpoint actually provides.
+TONE_HEAD_WEIGHTS = {
+    "tone_quality":   0.45,
+    "attack_quality": 0.25,
+    "release_quality": 0.15,
+    "overall":        0.15,
+}
+
+# ── Objective defect penalties ────────────────────────────────────
+# The 40 hand-engineered features are computed on every stroke and then thrown
+# away — only the CNN's scalar survives. These four are monotonic (more or less
+# is unambiguously better), need no human labels, and work at ANY window
+# length, which is what makes them useful exactly where the CNN is weakest:
+# notes too short to fill its 500 ms window.
+#
+# Deliberately excluded: spectral flatness (you want SOME noise — bow noise is
+# part of cello timbre, and driving it to zero gives a sterile sound) and
+# envelope_cv (a swell has high CV by design). heuristic_quality_score puts
+# 0.30 weight on minimising flatness, which is the most questionable part of it.
+#
+# (feature, direction, good_value, bad_value) — direction +1 means higher is
+# better. Scored linearly between good and bad, clipped to [0, 1].
+DEFECT_FEATURES = [
+    ("hnr_db_mean",        +1, 12.0,  3.0),   # scratchy when low
+    ("voiced_fraction",    +1,  0.98, 0.70),  # string not speaking
+    ("attack_overshoot",   -1,  0.85, 1.40),  # harsh attack
+    ("f0_stability_cents", -1,  1.0, 20.0),   # pitch wobble
+]
+W_DEFECT = 0.15   # scaled against the tone term; applied as a penalty
+
+# ── Onset acceleration penalty ────────────────────────────────────
+# Nothing in the reward has ever priced the harshness of a bow change. Each
+# stroke starts from rest and solve_stroke raises acceleration up to ACCEL_MAX
+# to make short notes fit — and higher acceleration IS a harder attack. This
+# makes that trade explicit instead of letting the planner choose harshness
+# silently. Zero penalty at the pendant-verified MOVE_ACCEL, full at ACCEL_MAX.
+W_ONSET_ACCEL = 0.05
+
+# Envelope jerk. Small on purpose: it should discourage a jagged shape without
+# flattening the envelope into the single value it replaced.
+W_ENVELOPE = 0.05
+# Segment speed below SPEED_MIN -> the string stops speaking.
+#
+# DORMANT at the current bounds: SPEED_RESIDUAL_FRAC 0.35 makes the most
+# lopsided envelope w = [0.65, 1.35, 1.35], whose slowest segment still clears
+# SPEED_MIN. Measured 0 firings over 40 enveloped strokes of t1 and
+# string_crossings under the worst-case action. It is insurance for a wider
+# residual range, not a term that currently does anything -- and note it prices
+# COMMANDED speed, so it would not catch an amplitude collapse arriving by any
+# other route. The reward is still blind on the audio side (RL_METHOD.md #2).
+W_SPEAK = 0.12
 
 # A dynamic error of this many dB zeroes the dynamic reward term.
 DYNAMIC_FULL_ERR_DB = 3.0
@@ -183,13 +259,53 @@ DYNAMIC_FULL_ERR_DB = 3.0
 # audio, and are perfectly valid on a short note.
 CLASSIFIER_WINDOW_SEC = 0.5
 
+# How much of the tone signal survives on the SHORTEST notes.
+#
+# What this term means CHANGED once the executor started cutting the analysis
+# window to the note (piece_hardware.NOTE_MATCHED_WINDOW). It used to stand for
+# "most of this 500 ms window is other notes, so distrust it" — a fixed window
+# around an 80 ms note is 420 ms of its neighbours, and scoring that is scoring
+# the wrong notes. That contamination is now gone: the window IS the note.
+#
+# What is left is only that the hand-engineered features get less reliable as
+# the window shrinks — fewer pitch periods for F0 stability and HNR. Measured
+# on the standard config that costs little: rho 0.824 at 0.10 s against 0.835
+# at 0.50 s. Hence a light floor rather than the heavy shrink this started as.
+WINDOW_FILL_FLOOR = 0.85
+
 # The acceleration ceiling solve_stroke plans against. Used to work out the
 # fastest MEAN speed a note of a given duration can reach (accel_max*T/4), so
 # the dynamic target is never set beyond what physics allows.
 ACCEL_MAX_FOR_DYNAMICS = PMP.ACCEL_MAX
 
 OBS_DIM = 18
-ACTION_DIM = 2      # [speed residual, depth residual], each in [-1, 1]
+
+# ── Per-segment envelope control ──────────────────────────────────
+# The policy used to emit ONE (speed, depth) for a whole note, which meant it
+# could not shape anything within a stroke — no ramped attack, no pressure
+# moving through the note. That is the expressive limit that motivated the
+# servoL work, and servoL turned out to cost real tone (0.840 -> 0.617
+# tone_quality on string_crossings, no lookahead setting recovering it).
+#
+# But moveL can already shape within a note: a blended moveL PATH carries a
+# speed AND a depth per waypoint and executes as one continuous motion. That is
+# how the planner renders swells. So the expressiveness servoL was wanted for
+# is available feed-forward, at moveL's tone quality, on EVERY note rather than
+# only the ~2% long enough for closed-loop feedback to arrive in time.
+#
+# The action is therefore an envelope: a (speed, depth) residual per segment.
+# Segment 0 is always the attack — for a note too short to segment it is the
+# whole note, so dim 0 means "the attack" consistently regardless of length.
+N_ENVELOPE_SEGMENTS = 3
+
+# Below this the note cannot usefully be split. Three segments of a 0.25 s note
+# are ~12 mm of bow each, and the blend radius (up to 5 mm) would be a large
+# fraction of that — the segments would smear into each other. Short notes take
+# segment 0's residual applied to the whole stroke, which is the right reading
+# anyway: a 0.08 s note IS its attack.
+ENVELOPE_MIN_DURATION = 0.40
+
+ACTION_DIM = 2 * N_ENVELOPE_SEGMENTS   # [spd x3, depth x3], each in [-1, 1]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -227,6 +343,11 @@ class StrokeResult:
     # what closes the dynamics loop acoustically; None in mock mode without a
     # loudness model, in which case the reward falls back to the speed proxy.
     measured_dbfs: float | None = None
+    # Per-segment (speed, depth) actually executed. The real classifier does
+    # not need this — it HEARS the shape. MockScorer does, because it scores
+    # from commanded numbers and would otherwise be blind to any envelope,
+    # making a flat envelope trivially optimal in mock training.
+    segment_profile: list | None = None
 
 
 class ExecutorBase:
@@ -288,6 +409,9 @@ class MockExecutor(ExecutorBase):
             measured_mean_speed=mean_speed,
             achieved_u_end=stroke.u_end,
             measured_dbfs=dbfs,
+            segment_profile=[
+                (abs(sg.u_end - sg.u_start) * PMP.BOW_LENGTH / max(sg.duration, 1e-6),
+                 sg.depth) for sg in stroke.segments],
         )
 
 
@@ -305,6 +429,42 @@ class MockScorer:
     def __init__(self, noise: float = 0.03, rng: np.random.Generator | None = None):
         self.noise = noise
         self.rng = rng or np.random.default_rng()
+
+    def score_detailed(self, audio, physical, window_pos=0.5,
+                       string="A", segment_profile=None) -> dict:
+        """Mirror RealScorer's richer contract so mock runs exercise the same
+        reward path. Heads are perturbations of the base score; defect features
+        are synthesized near their good values so the mock does not fabricate
+        defects the physics model knows nothing about.
+
+        `segment_profile` makes the mock able to SEE an envelope. Without it a
+        flat envelope is trivially optimal in mock training — the score comes
+        from stroke-level means, so no shape can move it — and a mock run then
+        proves only that the plumbing works, not that the action space is
+        learnable. The preference encoded here is deliberately the textbook
+        one: a note that starts a little slower and lighter than it ends
+        speaks more cleanly than one struck at full speed."""
+        base = self.score(audio, physical, window_pos, string)
+        attack_bonus = 0.0
+        if segment_profile and len(segment_profile) > 1:
+            (v0, d0), (v1, d1) = segment_profile[0], segment_profile[-1]
+            # Reward the first segment being gentler than the last, saturating
+            # so an absurdly slow attack is not rewarded without limit.
+            ramp = (v1 - v0) / max(abs(v1) + abs(v0), 1e-6)
+            lighten = (d1 - d0) / max(DEPTH_RESIDUAL_M * 2, 1e-6)
+            attack_bonus = 0.15 * float(np.clip(ramp, -1, 1)) \
+                + 0.05 * float(np.clip(lighten, -1, 1))
+        out = {h: float(np.clip(base + 0.05 * self.rng.standard_normal(), 0, 1))
+               for h in ("overall", "tone_quality", "attack_quality",
+                         "release_quality", "bow_control", "dynamic_accuracy")}
+        # The envelope shows up where it would in reality: the attack head.
+        for h in ("attack_quality", "overall"):
+            out[h] = float(np.clip(out[h] + attack_bonus, 0.0, 1.0))
+        for feat, direction, good, bad in DEFECT_FEATURES:
+            # Slide between good and bad with the base score, so a bad mock
+            # stroke also looks defective.
+            out[feat] = float(bad + (good - bad) * base)
+        return out
 
     def score(self, audio, physical, window_pos=0.5, string="A") -> float:
         depth, speed = float(physical[0]), float(physical[2])
@@ -330,7 +490,15 @@ class MockScorer:
 # 0.798 vs 0.702, val MSE 0.0242 vs 0.0355 — including 0.847 on the 'standard'
 # bow config, which is the one CONFIG_NAME selects and therefore the only one
 # the RL ever plays in.
+# The multilength model is preferred now that the executor feeds NOTE-MATCHED
+# windows: it was trained on 0.10/0.20/0.35/0.50 s windows, which is the
+# distribution it now actually sees. Measured on the standard config the two
+# are equal (mean rho 0.830 each), but across all five configs the multilength
+# one is both better and far flatter with length (0.782 vs 0.769 mean, spread
+# 0.006 vs 0.018) — so it is the safer choice when window length varies per
+# note rather than being fixed.
 HUMAN_CHECKPOINTS = [
+    REPO_ROOT / "SoundClassifier" / "checkpoints" / "quality_cnn_multilength.pt",
     REPO_ROOT / "SoundClassifier" / "checkpoints" / "quality_cnn_human_A1_A5.pt",
     REPO_ROOT / "SoundClassifier" / "checkpoints" / "quality_cnn_human_current.pt",
 ]
@@ -382,6 +550,28 @@ class RealScorer:
     def score(self, audio, physical, window_pos=0.5, string="A") -> float:
         return float(self.clf.predict(audio, physical, string=string,
                                       window_pos=window_pos))
+
+    def score_detailed(self, audio, physical, window_pos=0.5,
+                       string="A") -> dict:
+        """
+        Every head the checkpoint provides, plus the objective defect features.
+
+        Two independent signals come back. The heads are human judgement and
+        need the 500 ms window to be meaningful. The features are physics and
+        work at any length — which is what lets a short note be graded for
+        scratchiness and harsh attack even when its tone score cannot be
+        trusted.
+        """
+        out = dict(self.clf.predict_detailed(audio, physical, string=string,
+                                             window_pos=window_pos))
+        if audio is not None and len(audio) > 0:
+            import audio_features as af
+            scalars = af.extract_scalar_features(
+                np.asarray(audio, dtype=np.float32), sr=af.SR)
+            names = af.SCALAR_FEATURE_NAMES
+            for feat, *_ in DEFECT_FEATURES:
+                out[feat] = float(scalars[names.index(feat)])
+        return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -561,6 +751,73 @@ class PieceResidualEnv(gym.Env):
 
     # ── residual application ──────────────────────────────────────
 
+    def _build_envelope(self, s, u_start, u_end, length, solution, base_depth,
+                        spd_res, dep_res, use_envelope, depth) -> list:
+        """
+        Turn the envelope residuals into a blended moveL path.
+
+        The bow travels u_start -> u_end over the note's duration either way;
+        what the envelope decides is HOW that travel is distributed. Segment i
+        gets a speed weight of (1 + spd_res[i] * SPEED_RESIDUAL_FRAC), and the
+        spans are allocated in proportion — so a policy that wants a soft
+        attack asks for a slow first segment and the bow spends less hair
+        there, arriving at the same place at the same time.
+
+        Depth is set per segment outright, which is the part moveL can do and a
+        single-value action never could: lean in to make the string speak, then
+        lighten through the sustain.
+
+        Total length and total duration are preserved exactly, so the envelope
+        cannot smuggle in extra bow or break the rhythm — those stay the
+        planner's decisions.
+        """
+        if not use_envelope:
+            return [PMP.Segment(u_start=u_start, u_end=u_end,
+                                speed=solution.speed, accel=solution.accel,
+                                depth=depth, duration=solution.duration)]
+
+        n = N_ENVELOPE_SEGMENTS
+        weights = np.clip(1.0 + spd_res * SPEED_RESIDUAL_FRAC, 0.25, 4.0)
+        # Equal time per segment; the speed weights decide how much bow each
+        # one covers. Distributing by time (not distance) is what makes the
+        # weights read as "speed during this part of the note".
+        seg_duration = solution.duration / n
+        fractions = weights / weights.sum()
+
+        # Segment speeds must form a CONTINUOUS profile. Solving each segment
+        # with solve_stroke() would give it a rest-to-rest trapezoid, so the bow
+        # would decelerate to near zero at every interior boundary -- two dead
+        # stops inside a 1 s note. That is audible: the string stops speaking
+        # and re-articulates, and a listener hears the note break into three
+        # pieces. It also went unpunished by the reward (r_onset/r_smooth pay
+        # for a soft first segment; nothing priced the stalls), so the policy
+        # learned to do it. Only the first and last boundaries are at rest.
+        #
+        # Each segment therefore gets its own CRUISE speed, scaled by the same
+        # peak/mean ratio the whole-stroke solution uses so the two real end
+        # ramps are still paid for and the note keeps its duration.
+        mean_speed = length / max(solution.duration, 1e-6)
+        peak_over_mean = (solution.speed / mean_speed) if mean_speed > 1e-6 else 1.0
+
+        travel = u_end - u_start
+        segments, u = [], u_start
+        for i in range(n):
+            u_next = u + travel * float(fractions[i]) if i < n - 1 else u_end
+            span_m = abs(u_next - u) * PMP.BOW_LENGTH
+            # Cap at the calibrated grid: beyond SPEED_MAX the loudness model
+            # is extrapolating and the tone is uncharacterised. A capped
+            # segment simply runs a little long rather than being cut short.
+            cruise = (span_m / seg_duration) * peak_over_mean
+            cruise = float(np.clip(cruise, 1e-4, PMP.SPEED_MAX))
+            seg_depth = float(np.clip(
+                base_depth + float(dep_res[i]) * DEPTH_RESIDUAL_M,
+                DEPTH_LO, DEPTH_HI))
+            segments.append(PMP.Segment(
+                u_start=u, u_end=u_next, speed=cruise, accel=solution.accel,
+                depth=seg_depth, duration=seg_duration))
+            u = u_next
+        return segments
+
     def _build_exec_stroke(self, plan_stroke, action) -> tuple[ExecStroke, float]:
         """
         Apply the residual to a planned stroke from the CURRENT bow position.
@@ -579,7 +836,20 @@ class PieceResidualEnv(gym.Env):
             retake_from = self._u
             u_start = s.u_start
 
-        speed_scale = 1.0 + float(action[0]) * SPEED_RESIDUAL_FRAC
+        # Envelope: a (speed, depth) residual per segment. The MEAN speed
+        # residual sets the stroke's overall length — the bow budget is a
+        # property of the whole note — while the per-segment values shape how
+        # that length is distributed in time.
+        spd_res = np.asarray(action[:N_ENVELOPE_SEGMENTS], dtype=float)
+        dep_res = np.asarray(action[N_ENVELOPE_SEGMENTS:2 * N_ENVELOPE_SEGMENTS],
+                             dtype=float)
+        use_envelope = s.duration >= ENVELOPE_MIN_DURATION
+
+        # A note too short to segment is its own attack, so segment 0's
+        # residual applies to the whole thing. That keeps dim 0 meaning "the
+        # attack" whatever the note length.
+        speed_scale = 1.0 + (float(spd_res.mean()) if use_envelope
+                             else float(spd_res[0])) * SPEED_RESIDUAL_FRAC
 
         # Base depth: the planner's, unless dynamics were re-aimed -- then use
         # the depth the ORIGINAL written dynamic implies, so speed carries the
@@ -587,7 +857,8 @@ class PieceResidualEnv(gym.Env):
         base_depth = s.depth
         if self._depth_volumes and s.note_index < len(self._depth_volumes):
             base_depth = PMP.volume_to_depth(self._depth_volumes[s.note_index])
-        depth = float(np.clip(base_depth + float(action[1]) * DEPTH_RESIDUAL_M,
+        depth_res0 = float(dep_res.mean()) if use_envelope else float(dep_res[0])
+        depth = float(np.clip(base_depth + depth_res0 * DEPTH_RESIDUAL_M,
                               DEPTH_LO, DEPTH_HI))
 
         desired = s.length * speed_scale
@@ -603,25 +874,9 @@ class PieceResidualEnv(gym.Env):
         u_end = float(np.clip(u_start + sign * length / PMP.BOW_LENGTH,
                               PMP.U_MIN, PMP.U_MAX))
 
-        # Segments: scale the planned spans onto the new length, keep the
-        # swell's relative depth shape, shift it by the depth residual.
-        segments = []
-        if len(s.segments) > 1 and abs(s.u_end - s.u_start) > 1e-9:
-            scale = (u_end - u_start) / (s.u_end - s.u_start)
-            u = u_start
-            for seg in s.segments:
-                span = (seg.u_end - seg.u_start) * scale
-                sub = PMP.solve_stroke(abs(span) * PMP.BOW_LENGTH, seg.duration)
-                segments.append(PMP.Segment(
-                    u_start=u, u_end=u + span, speed=sub.speed, accel=sub.accel,
-                    depth=float(np.clip(seg.depth + float(action[1]) * DEPTH_RESIDUAL_M,
-                                        DEPTH_LO, DEPTH_HI)),
-                    duration=sub.duration))
-                u += span
-        else:
-            segments.append(PMP.Segment(
-                u_start=u_start, u_end=u_end, speed=solution.speed,
-                accel=solution.accel, depth=depth, duration=solution.duration))
+        segments = self._build_envelope(s, u_start, u_end, length, solution,
+                                        base_depth, spd_res, dep_res,
+                                        use_envelope, depth)
 
         prev_end = (self.plan[self._i - 1].onset + self.plan[self._i - 1].duration
                     if self._i > 0 else 0.0)
@@ -649,15 +904,81 @@ class PieceResidualEnv(gym.Env):
     def _reward(self, plan_stroke, exec_stroke, result, shortfall,
                 action) -> tuple[float, dict]:
         window_pos = 0.5
-        quality = float(self.scorer.score(result.audio, result.physical,
+        detail = {}
+        if hasattr(self.scorer, "score_detailed"):
+            try:
+                detail = self.scorer.score_detailed(
+                    result.audio, result.physical, window_pos=window_pos,
+                    string=self.string, segment_profile=result.segment_profile)
+            except TypeError:
+                # RealScorer hears the shape in the audio and takes no profile.
+                detail = self.scorer.score_detailed(
+                    result.audio, result.physical, window_pos=window_pos,
+                    string=self.string)
+        quality = float(detail.get("overall") if detail else
+                        self.scorer.score(result.audio, result.physical,
                                           window_pos=window_pos,
                                           string=self.string))
 
-        # Shrink toward neutral when the note is too short to fill the
-        # classifier's window (see CLASSIFIER_WINDOW_SEC).
         fill = float(np.clip(exec_stroke.duration / CLASSIFIER_WINDOW_SEC,
                              0.0, 1.0))
-        quality_eff = 0.5 + fill * (quality - 0.5)
+
+        # ── tone, from whichever heads the checkpoint provides ────
+        # A short note is nearly all attack and release — there is barely any
+        # sustain to judge — so as `fill` falls, weight shifts onto the heads
+        # that describe short events. That is the point of using the detailed
+        # output rather than `overall`: attack_quality is a HUMAN judgement
+        # about something that actually fits inside an 80 ms note.
+        tone = quality
+        if detail:
+            weights = dict(TONE_HEAD_WEIGHTS)
+            if fill < 1.0:
+                shift = (1.0 - fill)
+                weights["attack_quality"] += 0.30 * shift
+                weights["release_quality"] += 0.10 * shift
+                weights["tone_quality"] = max(0.0, weights["tone_quality"] - 0.30 * shift)
+                weights["overall"] = max(0.0, weights["overall"] - 0.10 * shift)
+            usable = {h: w for h, w in weights.items() if h in detail and w > 0}
+            if usable:
+                total_w = sum(usable.values())
+                tone = sum(detail[h] * w for h, w in usable.items()) / total_w
+
+        # Only a light discount for short windows — and measurement, not
+        # assumption, is why it is light.
+        #
+        # This started as a heavy shrink toward neutral (fill scaling the whole
+        # deviation), on the assumption that a short note padded out to 500 ms
+        # with spectrogram floor could not be scored. Tested directly on the
+        # standard config, that assumption was WRONG: scoring the same
+        # recordings at different window lengths gives
+        #
+        #     0.10s rho 0.824    0.35s rho 0.828
+        #     0.20s rho 0.834    0.50s rho 0.835
+        #
+        # i.e. the ranking barely degrades down to 100 ms, because the trunk's
+        # mean+std pooling is still driven by the real frames and the padding
+        # only adds a constant. The heavy discount was suppressing real signal.
+        #
+        # A small residual discount is kept because rho measures ORDERING, not
+        # calibration, and because these were clean slices of sustained strokes
+        # — a short note in a real passage also has its neighbours bleeding
+        # into the window, which none of this tested.
+        quality_eff = 0.5 + (WINDOW_FILL_FLOOR
+                             + (1.0 - WINDOW_FILL_FLOOR) * fill) * (tone - 0.5)
+
+        # ── objective defects, valid at any window length ─────────
+        r_defect = 0.0
+        defect_detail = {}
+        for feat, direction, good, bad in DEFECT_FEATURES:
+            if feat not in detail:
+                continue
+            value = detail[feat]
+            score01 = (value - bad) / (good - bad) if good != bad else 1.0
+            score01 = float(np.clip(score01, 0.0, 1.0))
+            defect_detail[feat] = score01
+            r_defect += (1.0 - score01)
+        if defect_detail:
+            r_defect /= len(defect_detail)
 
         # Dynamic accuracy: achieved mean speed vs what the score asked for --
         # but capped at what the note's DURATION physically allows.
@@ -706,18 +1027,64 @@ class PieceResidualEnv(gym.Env):
 
         r_smooth = -0.5 * float(np.mean(np.abs(action - self._prev_action)))
 
+        # Envelope jerk: a shape that lurches between segments is a bow that
+        # lurches within the note. Penalising the step between consecutive
+        # segments pushes the policy toward shapes that ramp rather than jump —
+        # which is the whole point of having an envelope instead of one value.
+        spd_env = np.asarray(action[:N_ENVELOPE_SEGMENTS], dtype=float)
+        dep_env = np.asarray(action[N_ENVELOPE_SEGMENTS:2 * N_ENVELOPE_SEGMENTS],
+                             dtype=float)
+        r_envelope = 0.0
+        if exec_stroke.duration >= ENVELOPE_MIN_DURATION and N_ENVELOPE_SEGMENTS > 1:
+            r_envelope = -0.5 * float(
+                np.mean(np.abs(np.diff(spd_env))) + np.mean(np.abs(np.diff(dep_env))))
+
+        # Harsh bow changes: acceleration above the pendant-verified nominal is
+        # what makes an attack hard, and solve_stroke raises it freely to fit
+        # short notes. Price it so the policy can trade attack smoothness
+        # against the planner's rhythmic precision explicitly.
+        accel = exec_stroke.accel
+        r_onset = -float(np.clip(
+            (accel - PMP.MOVE_ACCEL) / max(ACCEL_MAX_FOR_DYNAMICS - PMP.MOVE_ACCEL, 1e-6),
+            0.0, 1.0))
+
+        # A segment slower than the calibrated floor does not make the string
+        # speak. This is the term that was missing when the rest-to-rest
+        # renderer stalled the bow twice per note: the result was audibly
+        # broken to a listener, and the reward called it an improvement (see
+        # RL_METHOD.md 9.3). The renderer no longer stalls by construction, but
+        # the speed weights clip at 0.25..4.0, so a lopsided envelope can still
+        # starve a segment. Price the physical cause -- bow too slow to sustain
+        # Helmholtz motion -- rather than the specific rendering bug.
+        r_speak = 0.0
+        if len(exec_stroke.segments) > 1:
+            deficits = [
+                np.clip((PMP.SPEED_MIN - sg.speed) / PMP.SPEED_MIN, 0.0, 1.0)
+                for sg in exec_stroke.segments]
+            r_speak = -float(np.mean(deficits))
+
         total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
-                 + W_BOW * r_bow + W_SMOOTH * r_smooth)
+                 + W_BOW * r_bow + W_SMOOTH * r_smooth
+                 - W_DEFECT * r_defect + W_ONSET_ACCEL * r_onset
+                 + W_ENVELOPE * r_envelope + W_SPEAK * r_speak)
         components = {
             # `quality` stays the RAW classifier score so logs and the
             # episode summary report what was actually heard; quality_eff is
             # what the policy is graded on.
             "quality": quality, "quality_eff": quality_eff,
-            "window_fill": fill,
+            "tone": float(tone), "window_fill": fill,
             "r_dynamic": r_dynamic, "r_bow": r_bow,
             "r_smooth": r_smooth, "err_db": float(err_db),
+            "r_defect": float(r_defect), "r_onset": float(r_onset),
+            "r_envelope": float(r_envelope), "r_speak": float(r_speak),
+            "n_segments": len(exec_stroke.segments),
+            "accel": float(accel),
             "shortfall": shortfall, "total": float(total),
             "zone": zone, "dbfs": result.measured_dbfs,
+            **{f"d_{k}": v for k, v in defect_detail.items()},
+            **{f"h_{k}": detail[k] for k in
+               ("tone_quality", "attack_quality", "release_quality")
+               if k in detail},
         }
         return float(total), components
 

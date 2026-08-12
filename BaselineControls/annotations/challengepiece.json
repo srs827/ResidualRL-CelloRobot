@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Per-note overrides for challengepiece.mxl. Use with:",
+    "  play_midi_pieces.py <...>/challengepiece.mxl --tempo-scale 1.25 \\",
+    "      --annotations BaselineControls/annotations/challengepiece.json \\",
+    "      --articulation-ref 1.0",
+    "",
+    "INDICES ARE PRE-MERGE. Annotations are applied in build_score() BEFORE",
+    "merge_slurs(), so these indices are the parsed score order, not the row",
+    "numbers in the --dry-run table. They agree only up to the first slur",
+    "(index 7 in this piece); past that the plan rows shift by the number of",
+    "notes merged so far.",
+    "",
+    "WHY THE SLUR SWELLS LOOK ODD: merge_slurs() overwrites the first note's",
+    "volume_end with the LAST note's volume. So to swell a merged slur you set",
+    "the last note's 'volume', not the first note's 'volume_end'. Unslurred",
+    "notes use 'volume_end' normally.",
+    "",
+    "depth_mm is signed: negative is lighter/outward, positive presses in. The",
+    "piece is marked pp throughout, which puts every note at 0.115 m/s and",
+    "-0.96 mm -- slow bow AND light depth at once, the corner where the string",
+    "stops speaking. The long sustained notes suffer most, so they are given",
+    "weight (+0.3 mm) and a swell to keep them alive."
+  ],
+
+  "notes": [
+    {"index":  7, "depth_mm": 0.3},
+    {"index":  8, "volume": "p"},
+
+    {"index":  9, "depth_mm": 0.3},
+    {"index": 10, "volume": "p"},
+
+    {"index": 29, "depth_mm": 0.3},
+    {"index": 30, "volume": "p"},
+
+    {"index": 31, "depth_mm": 0.3},
+    {"index": 32, "volume": "p"},
+
+    {"index": 40, "depth_mm": 0.3, "volume_end": "p"},
+    {"index": 48, "depth_mm": 0.3, "volume_end": "p"},
+    {"index": 56, "depth_mm": 0.3, "volume_end": "p"}
+  ]
+}

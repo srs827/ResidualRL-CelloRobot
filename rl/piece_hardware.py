@@ -42,6 +42,30 @@ from rl.loudness import measure_dbfs
 WINDOW_SEC = 0.5          # classifier window (SoundClassifier convention)
 PRE_ROLL_SEC = 0.05       # skip the attack transient when the stroke is long
 
+# Shortest window worth analysing. Below this the hand-engineered features
+# genuinely run out of signal — at 50 ms an open A gives only ~11 periods, and
+# F0 stability and HNR need more than that to mean anything.
+MIN_ANALYSIS_SEC = 0.08
+
+# Cut the analysis window to the NOTE, not to a fixed 500 ms.
+#
+# A fixed window centred on an 80 ms note contains 80 ms of that note and
+# 420 ms of its neighbours, so the score is mostly about the wrong notes. On
+# challengepiece that is 86% of the piece. Averaging across notes to fill a
+# window is not a defensible way to score a note.
+#
+# The model can take it: scoring the standard-config recordings at different
+# window lengths gives rho 0.824 at 0.10 s against 0.835 at 0.50 s, so ranking
+# barely degrades as the window shrinks. The trunk pools time with mean+std, so
+# any frame count works, and a note-length window means every frame it sees
+# belongs to the note being judged.
+#
+# For notes too short even for MIN_ANALYSIS_SEC, the window is the note plus
+# whatever release follows it — and the reward already grades those mostly on
+# attack_quality, which is a human-labelled judgement about exactly that part
+# of a stroke and is the only sound estimate available at that length.
+NOTE_MATCHED_WINDOW = True
+
 
 def _rec():
     """The recording module play_midi_pieces already loaded, for its verified
@@ -138,24 +162,34 @@ class HardwareExecutor(ExecutorBase):
             self._stream = None
 
     @staticmethod
-    def _window_centre(t_start: float, t_end: float) -> float:
+    def _window_bounds(t_start: float, t_end: float) -> tuple[float, float]:
+        """
+        Absolute (start, end) of the analysis window, matched to the note.
+
+        LONG note (longer than the window plus room to skip the attack): take a
+        steady WINDOW_SEC from the middle, past the onset transient. This is
+        the sustained-tone case the classifier was trained on.
+
+        SHORT note: take the NOTE, whatever length it is. Nothing is padded and
+        no neighbour is included, so the score is about this note alone. A note
+        below MIN_ANALYSIS_SEC is extended to that minimum, which runs into its
+        own release rather than into the next note.
+        """
         dur = t_end - t_start
         if dur > WINDOW_SEC + 2 * PRE_ROLL_SEC:
-            return t_start + PRE_ROLL_SEC + (dur - PRE_ROLL_SEC) / 2.0
-        return (t_start + t_end) / 2.0
+            centre = t_start + PRE_ROLL_SEC + (dur - PRE_ROLL_SEC) / 2.0
+            return centre - WINDOW_SEC / 2.0, centre + WINDOW_SEC / 2.0
+        return t_start, t_start + max(dur, MIN_ANALYSIS_SEC)
 
     def _slice_window(self, t_start: float, t_end: float) -> np.ndarray | None:
-        """~500 ms peak-normalized window from the middle of [t_start, t_end]."""
+        """Note-matched, peak-normalised window (see _window_bounds)."""
         if self._audio_t0 is None or not self._chunks:
             return None, None
         audio = np.concatenate(self._chunks)
         sr = self.sample_rate
-        centre = self._window_centre(t_start, t_end)
-        lo = int((centre - self._audio_t0 - WINDOW_SEC / 2.0) * sr)
-        hi = lo + int(WINDOW_SEC * sr)
-        lo = max(lo, 0)
-        if hi > len(audio):
-            hi = len(audio)
+        w_start, w_end = self._window_bounds(t_start, t_end)
+        lo = max(int((w_start - self._audio_t0) * sr), 0)
+        hi = min(int((w_end - self._audio_t0) * sr), len(audio))
         window = audio[lo:hi]
         if len(window) == 0:
             return None, None
@@ -236,7 +270,7 @@ class HardwareExecutor(ExecutorBase):
         # zero-pads -- silence the model never saw in training. Wait for the
         # real end of the window, with a bound so a stalled input stream can
         # never hang the run.
-        window_end = self._window_centre(t_start, t_end) + WINDOW_SEC / 2.0
+        window_end = self._window_bounds(t_start, t_end)[1]
         deadline = min(window_end + 0.02, t_end + 0.5)
         while time.time() < deadline:
             time.sleep(0.01)

@@ -137,19 +137,63 @@ def compute_loss(pred, targets, window_pos):
 
 # --------------------------------------------------------------- dataset --
 
+class LengthBucketSampler(torch.utils.data.Sampler):
+    """
+    Yields batches whose windows all share one length.
+
+    Variable-length training needs no model change — the trunk pools time with
+    mean+std, so any frame count works — but a batch is a single tensor, so
+    everything in it must be the same shape. Bucketing by length is the
+    simplest way to get that: no padding, no masking, no fabricated frames.
+    """
+
+    def __init__(self, examples, indices, batch_size, shuffle=True):
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        buckets = {}
+        for pos, idx in enumerate(indices):
+            key = float(examples[idx].get('window_sec', ds.WINDOW_SEC))
+            buckets.setdefault(key, []).append(pos)
+        self.buckets = buckets
+
+    def __iter__(self):
+        batches = []
+        for positions in self.buckets.values():
+            order = list(positions)
+            if self.shuffle:
+                np.random.shuffle(order)
+            batches += [order[i:i + self.batch_size]
+                        for i in range(0, len(order), self.batch_size)]
+        if self.shuffle:
+            np.random.shuffle(batches)
+        return iter(batches)
+
+    def __len__(self):
+        return sum((len(v) + self.batch_size - 1) // self.batch_size
+                   for v in self.buckets.values())
+
+
 class WindowDataset(Dataset):
-    def __init__(self, examples, indices, scalar_norm, physical_norm):
+    def __init__(self, examples, indices, scalar_norm, physical_norm,
+                 native_length=False):
         self.examples = examples
         self.indices = indices
         self.scalar_norm = scalar_norm
         self.physical_norm = physical_norm
+        self.native_length = native_length
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, i):
         ex = self.examples[self.indices[i]]
-        mel = qc.audio_to_mel_tensor(ex['audio'])
+        # target_frames=None keeps the window's NATIVE length. Resizing a
+        # 0.10 s window up to 87 frames pads it with spectrogram floor, which
+        # is exactly the synthetic content that made short-note scores
+        # untrustworthy in the first place. LengthBucketSampler guarantees a
+        # batch shares one length, so nothing needs padding or masking.
+        mel = (qc.audio_to_mel_tensor(ex['audio'], target_frames=None)
+               if self.native_length else qc.audio_to_mel_tensor(ex['audio']))
         scalar = self.scalar_norm(ex['scalar_features'])
         physical = self.physical_norm(ex['physical_features'])
         multidim = np.array([ex['labels_multidim'][f] for f in ds.TIER1_FIELDS], dtype=np.float32)
@@ -179,15 +223,35 @@ def _targets_from_multidim(multidim):
     return {field: multidim[:, i] for i, field in enumerate(ds.TIER1_FIELDS)}
 
 
-def train_one_split(examples, train_idx, val_idx, device, epochs, batch_size, lr, verbose=True):
+def train_one_split(examples, train_idx, val_idx, device, epochs, batch_size, lr,
+                    verbose=True, multilength=False):
     stats = ds.compute_normalization_stats(examples, train_idx)
     scalar_norm = qc.FeatureNormalizer(stats['scalar_mean'], stats['scalar_std'])
     physical_norm = qc.FeatureNormalizer(stats['physical_mean'], stats['physical_std'])
 
-    train_loader = DataLoader(WindowDataset(examples, train_idx, scalar_norm, physical_norm),
-                               batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(WindowDataset(examples, val_idx, scalar_norm, physical_norm),
-                             batch_size=batch_size, shuffle=False) if val_idx else None
+    if multilength:
+        # Batches must share a frame count; the sampler groups by window length.
+        train_loader = DataLoader(
+            WindowDataset(examples, train_idx, scalar_norm, physical_norm,
+                          native_length=True),
+            batch_sampler=LengthBucketSampler(examples, train_idx, batch_size,
+                                              shuffle=True))
+    else:
+        train_loader = DataLoader(
+            WindowDataset(examples, train_idx, scalar_norm, physical_norm),
+            batch_size=batch_size, shuffle=True)
+    if not val_idx:
+        val_loader = None
+    elif multilength:
+        val_loader = DataLoader(
+            WindowDataset(examples, val_idx, scalar_norm, physical_norm,
+                          native_length=True),
+            batch_sampler=LengthBucketSampler(examples, val_idx, batch_size,
+                                              shuffle=False))
+    else:
+        val_loader = DataLoader(
+            WindowDataset(examples, val_idx, scalar_norm, physical_norm),
+            batch_size=batch_size, shuffle=False)
 
     model = qc.MelQualityCNN().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -419,13 +483,21 @@ def main():
     parser.add_argument('--baseline', action='store_true',
                          help="Also train a Ridge baseline on scalar+physical features "
                               "and compare its recording-level Spearman rho to the CNN's.")
+    parser.add_argument('--multilength', action='store_true',
+                        help="cut each recording at several window lengths "
+                             f"({ds.WINDOW_LENGTHS_SEC}) instead of only 0.5s, "
+                             "every window inheriting its stroke's label. "
+                             "Teaches length invariance so short notes can be "
+                             "scored on their own length instead of being "
+                             "padded out with spectrogram floor.")
     parser.add_argument('--pseudo-labels', action='store_true',
                          help="Train from deterministic audio/metadata pseudo-labels instead of "
                               "requiring human annotations. Temporary bootstrap mode for RL.")
     args = parser.parse_args()
 
     examples = ds.build_training_examples(args.meta, args.audio_dir,
-                                          pseudo_labels=args.pseudo_labels)
+                                          pseudo_labels=args.pseudo_labels,
+                                          multilength=args.multilength)
     if not examples:
         print("No labeled recordings with audio found -- nothing to train on. "
               "Run annotate.py first, or pass --pseudo-labels for temporary heuristic labels.")
@@ -446,7 +518,7 @@ def main():
           f"(from {n_groups} annotated recordings)")
 
     model, scalar_norm, physical_norm, best_val_mse, window_rho, record_rho = train_one_split(
-        examples, train_idx, val_idx, device, args.epochs, args.batch_size, args.lr)
+        examples, train_idx, val_idx, device, args.epochs, args.batch_size, args.lr, multilength=args.multilength)
     print(f"\nBest val MSE: {best_val_mse:.4f}  window_rho={window_rho:.3f}  record_rho={record_rho:.3f}")
 
     evaluate_bad_condition_separation(examples, model, scalar_norm, physical_norm, device, args.batch_size)
@@ -472,6 +544,8 @@ def main():
         'schema_version': 2,
         'label_source': ds.PSEUDO_LABEL_SOURCE if args.pseudo_labels else 'human_annotation',
         'pseudo_labels': bool(args.pseudo_labels),
+        'multilength': bool(args.multilength),
+        'window_lengths_sec': list(ds.WINDOW_LENGTHS_SEC) if args.multilength else [ds.WINDOW_SEC],
     }, out_path)
     print(f"Saved checkpoint to {out_path}")
 

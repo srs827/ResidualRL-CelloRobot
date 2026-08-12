@@ -32,6 +32,24 @@ import audio_features as af
 
 WINDOW_SEC      = 0.5     # must match reward/sliding_window.py's window_sec
 TRAIN_HOP_SEC   = 0.25    # overlap between augmented training windows
+
+# Window lengths to cut for LENGTH-INVARIANT training.
+#
+# The model has only ever seen 0.5 s windows, but most notes in real repertoire
+# are shorter than that — 86% of challengepiece, 84% of t1. Scoring them means
+# padding a short note out to 0.5 s with spectrogram floor, which is synthetic
+# content the model never trained on, so short-note scores cannot be trusted.
+#
+# The architecture is already length-agnostic: the trunk pools frequency fully
+# and summarises time with mean+std, so it produces a fixed 128-dim vector for
+# any number of frames (verified from 18 to 87). What it lacks is TRAINING at
+# other lengths. Cutting the existing 500 recordings at several lengths, each
+# window inheriting its stroke's human label, teaches that invariance without
+# any new annotation.
+#
+# 0.10 s is chosen to reach below the shortest notes in the repertoire; the
+# rest space the range roughly geometrically.
+WINDOW_LENGTHS_SEC = (0.10, 0.20, 0.35, 0.50)
 PRE_PAD_S       = 0.05    # include a little pre-onset audio for attack features
 POST_PAD_S      = 0.10
 
@@ -215,6 +233,33 @@ def _active_region(record, audio_len_samples, sr):
     return start_s, end_s
 
 
+def cut_windows_multilength(audio, sr, record, lengths=WINDOW_LENGTHS_SEC,
+                            hop_sec=TRAIN_HOP_SEC):
+    """
+    Cut each recording at several window lengths, every window keeping the
+    recording's label. This is what teaches the model length invariance from
+    data that already exists (see WINDOW_LENGTHS_SEC).
+
+    Every length uses the SAME hop, which keeps the buckets balanced.
+
+    Scaling the hop with the window length (the obvious first idea) badly
+    oversamples the short ones: over a 4.35 s median active region it gave
+    42,500 windows at 0.10 s against 8,000 at 0.50 s — 51% of the dataset at
+    one length and 10% at another. A model trained on that would be pulled
+    toward short windows and would likely lose accuracy at 0.50 s, which is
+    the length it currently does well. A constant hop yields roughly equal
+    counts per length, and about 33k windows instead of 83k.
+
+    Yields (chunk, start_n, end_n, window_sec).
+    """
+    out = []
+    for window_sec in lengths:
+        for chunk, a, b in cut_windows(audio, sr, record,
+                                       window_sec=window_sec, hop_sec=hop_sec):
+            out.append((chunk, a, b, window_sec))
+    return out
+
+
 def cut_windows(audio, sr, record, window_sec=WINDOW_SEC, hop_sec=TRAIN_HOP_SEC):
     """
     Slice `audio` into `window_sec`-long chunks spanning the recording's
@@ -253,7 +298,7 @@ def cut_windows(audio, sr, record, window_sec=WINDOW_SEC, hop_sec=TRAIN_HOP_SEC)
 
 
 def build_training_examples(meta_file, audio_dir, sr=af.SR, verbose=True,
-                            pseudo_labels=False):
+                            pseudo_labels=False, multilength=False):
     """
     Returns a list of dicts, one per training window:
         {audio, scalar_features, physical_features, label, labels_multidim,
@@ -295,7 +340,9 @@ def build_training_examples(meta_file, audio_dir, sr=af.SR, verbose=True,
         active_start_n, active_end_n = int(active_start_s * sr), int(active_end_s * sr)
         active_span_n = max(1, active_end_n - active_start_n)
 
-        for window, a, b in cut_windows(audio, sr, record):
+        cutter = (cut_windows_multilength(audio, sr, record) if multilength
+                  else [(w, a, b, WINDOW_SEC) for w, a, b in cut_windows(audio, sr, record)])
+        for window, a, b, win_sec in cutter:
             window_center_fraction = float(((a + b) / 2 - active_start_n) / active_span_n)
             window = af.normalize_peak(window)
             scalar = np.nan_to_num(af.extract_scalar_features(window, sr=sr),
@@ -320,6 +367,7 @@ def build_training_examples(meta_file, audio_dir, sr=af.SR, verbose=True,
                 'labels_multidim': {k: np.float32(v if v is not None else label)
                                     for k, v in multidim.items()},
                 'window_pos': np.float32(window_center_fraction),
+                'window_sec': np.float32(win_sec),
                 'group_id': group_id,
                 'condition_label': record.get('condition_label'),
                 'config': record.get('config') or (record.get('commanded') or {}).get('config'),
