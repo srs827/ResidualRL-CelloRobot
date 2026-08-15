@@ -123,7 +123,8 @@ class LoudnessModel:
                                  depth_m)
 
     def zone_reward(self, measured_dbfs: float, zone: str,
-                    falloff_db: float = 3.0) -> float:
+                    falloff_db: float = 3.0,
+                    bounds: tuple[float, float] | None = None) -> float:
         """
         1.0 anywhere inside the zone, falling linearly to 0 once the stroke is
         `falloff_db` outside the nearest edge.
@@ -132,10 +133,14 @@ class LoudnessModel:
         residual is 1.14 dB: rewarding sub-decibel precision would be
         rewarding measurement noise, and would also punish the tone-driven
         micro-adjustments the policy is supposed to be free to make.
+
+        `bounds` (model frame) overrides the zone's stored bounds — used for
+        duration-aware grading of notes that physically cannot reach the
+        written zone (Zixian, 2026-08-13).
         """
         # Bring the measurement into the model's frame before comparing.
         measured_dbfs = measured_dbfs - self.gain_offset_db
-        lo, hi = self.zone_bounds(zone)
+        lo, hi = bounds if bounds is not None else self.zone_bounds(zone)
         if lo <= measured_dbfs <= hi:
             return 1.0
         distance = (lo - measured_dbfs) if measured_dbfs < lo else (measured_dbfs - hi)

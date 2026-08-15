@@ -114,7 +114,18 @@ class BowingQualityClassifier:
         mel = qc.audio_to_mel_tensor(audio, sr=SR, target_frames=qc.TARGET_FRAMES)
         mel_t = torch.from_numpy(mel[np.newaxis].astype(np.float32)).to(self.device)
         scalar_t = torch.from_numpy(self.scalar_norm(scalar)[np.newaxis].astype(np.float32)).to(self.device)
-        physical_t = torch.from_numpy(self.physical_norm(physical)[np.newaxis].astype(np.float32)).to(self.device)
+        # OOD guardrail (Zixian, 2026-08-14): clip standardized physical
+        # features to +-2.5 sigma of the training distribution. Outside its
+        # data the network extrapolates arbitrarily — measured 2026-08-13:
+        # fresh rosin roughly doubled contact torque, and tone_quality/
+        # attack_quality fell off a cliff (0.8 -> 0.0) on strokes the ear
+        # called unremarkable, while `overall` barely moved. Clipping keeps
+        # the in-range signal (more torque still scores worse) and holds
+        # out-of-range strokes at the worst IN-distribution judgement
+        # instead of freefalling. Same treatment for both judges — the
+        # bounds come from each checkpoint's own stored physical_norm.
+        physical_z = np.clip(self.physical_norm(physical), -2.5, 2.5)
+        physical_t = torch.from_numpy(physical_z[np.newaxis].astype(np.float32)).to(self.device)
         window_pos_t = None
         if window_pos is not None:
             window_pos_t = torch.tensor([[float(window_pos)]], dtype=torch.float32, device=self.device)

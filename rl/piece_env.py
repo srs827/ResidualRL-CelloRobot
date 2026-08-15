@@ -208,10 +208,15 @@ TONE_HEAD_WEIGHTS = {
 # (feature, direction, good_value, bad_value) — direction +1 means higher is
 # better. Scored linearly between good and bad, clipped to [0, 1].
 DEFECT_FEATURES = [
-    ("hnr_db_mean",        +1, 12.0,  3.0),   # scratchy when low
-    ("voiced_fraction",    +1,  0.98, 0.70),  # string not speaking
-    ("attack_overshoot",   -1,  0.85, 1.40),  # harsh attack
-    ("f0_stability_cents", -1,  1.0, 20.0),   # pitch wobble
+    # (feature, direction, good, bad, weight) — weights let one defect be
+    # priced harder than the others without re-scaling W_DEFECT: the
+    # dynamics-vs-scratchiness imbalance (writeup-aug12 §4: ~6:1 in favour
+    # of staying quiet and scratchy) is tuned here, via hnr's weight.
+    # (weight column added by Zixian, 2026-08-13; defaults unchanged.)
+    ("hnr_db_mean",        +1, 12.0,  3.0, 1.0),   # scratchy when low
+    ("voiced_fraction",    +1,  0.98, 0.70, 1.0),  # string not speaking
+    ("attack_overshoot",   -1,  0.85, 1.40, 1.0),  # harsh attack
+    ("f0_stability_cents", -1,  1.0, 20.0, 1.0),   # pitch wobble
 ]
 W_DEFECT = 0.15   # scaled against the tone term; applied as a penalty
 
@@ -278,7 +283,16 @@ WINDOW_FILL_FLOOR = 0.85
 # the dynamic target is never set beyond what physics allows.
 ACCEL_MAX_FOR_DYNAMICS = PMP.ACCEL_MAX
 
-OBS_DIM = 18
+# 22 = the original 16 score/state dims + the FULL previous action (6). It
+# was 18 with only prev_action[0:2] — sensible for the old [speed, depth]
+# action, but after the envelope change those two slots held segment-0/1
+# SPEED residuals and the depth half of the action was invisible to the
+# policy. That made r_smooth's depth component unpredictable from (s, a) —
+# reward noise whose only deterministic fix is a CONSTANT depth action
+# ("depth shaping went unused" is that attractor's signature) — and blocked
+# any incremental depth correction. (Zixian, 2026-08-13; checkpoints were
+# already invalidated by the 2->6 action change, so this costs nothing now.)
+OBS_DIM = 22
 
 # ── Per-segment envelope control ──────────────────────────────────
 # The policy used to emit ONE (speed, depth) for a whole note, which meant it
@@ -460,7 +474,7 @@ class MockScorer:
         # The envelope shows up where it would in reality: the attack head.
         for h in ("attack_quality", "overall"):
             out[h] = float(np.clip(out[h] + attack_bonus, 0.0, 1.0))
-        for feat, direction, good, bad in DEFECT_FEATURES:
+        for feat, direction, good, bad, _w in DEFECT_FEATURES:
             # Slide between good and bad with the base score, so a bad mock
             # stroke also looks defective.
             out[feat] = float(bad + (good - bad) * base)
@@ -969,16 +983,18 @@ class PieceResidualEnv(gym.Env):
         # ── objective defects, valid at any window length ─────────
         r_defect = 0.0
         defect_detail = {}
-        for feat, direction, good, bad in DEFECT_FEATURES:
+        defect_wsum = 0.0
+        for feat, direction, good, bad, w in DEFECT_FEATURES:
             if feat not in detail:
                 continue
             value = detail[feat]
             score01 = (value - bad) / (good - bad) if good != bad else 1.0
             score01 = float(np.clip(score01, 0.0, 1.0))
             defect_detail[feat] = score01
-            r_defect += (1.0 - score01)
-        if defect_detail:
-            r_defect /= len(defect_detail)
+            r_defect += w * (1.0 - score01)
+            defect_wsum += w
+        if defect_wsum > 0:
+            r_defect /= defect_wsum
 
         # Dynamic accuracy: achieved mean speed vs what the score asked for --
         # but capped at what the note's DURATION physically allows.
@@ -998,6 +1014,7 @@ class PieceResidualEnv(gym.Env):
         target_speed = min(written_speed, achievable_speed)
 
         zone = None
+        zone_cap_db = 0.0
         if self.loudness is not None and result.measured_dbfs is not None:
             # CLOSED LOOP: grade the level the instrument actually produced
             # against the zone this dynamic belongs in. Bow speed was only ever
@@ -1006,8 +1023,29 @@ class PieceResidualEnv(gym.Env):
             # speed->level transfer. This measures the thing we actually care
             # about.
             zone = self.loudness.zone_for_dynamic(plan_stroke.dynamic)
-            r_dynamic = self.loudness.zone_reward(result.measured_dbfs, zone)
             lo, hi = self.loudness.zone_bounds(zone)
+            # Duration-aware grading (Zixian, 2026-08-13): a short note's mean
+            # speed tops out at accel_max*T/4, so its level tops out at what
+            # the loudness model predicts for that speed. Grading an absolute
+            # zone above that cap charged an unremovable penalty — the same
+            # disease the open-loop branch above already fixed. When the
+            # written zone is unreachable, LOWER THE FLOOR to the reachable
+            # region but KEEP THE WRITTEN CEILING: anything louder than the
+            # model's cap is strictly closer to what the composer asked for,
+            # so it must never be punished (the cap is a model estimate with
+            # ~1.1 dB residual — half of all best-effort strokes read above
+            # it). The cap is computed at the PLAN's depth, not the executed
+            # one, so the policy cannot drag its own grading band down by
+            # playing shallow.
+            zone_cap_db = 0.0
+            cap_dbfs = self.loudness.predict_dbfs(
+                min(achievable_speed, self.loudness.speed_max),
+                plan_stroke.depth)
+            if cap_dbfs < lo:
+                zone_cap_db = lo - cap_dbfs
+                lo = cap_dbfs - (hi - lo)      # hi stays the written ceiling
+            r_dynamic = self.loudness.zone_reward(result.measured_dbfs, zone,
+                                                  bounds=(lo, hi))
             centre = (lo + hi) / 2.0
             err_db = float(result.measured_dbfs - centre)
         else:
@@ -1043,9 +1081,29 @@ class PieceResidualEnv(gym.Env):
         # what makes an attack hard, and solve_stroke raises it freely to fit
         # short notes. Price it so the policy can trade attack smoothness
         # against the planner's rhythmic precision explicitly.
+        #
+        # Short-note fix (Zixian, 2026-08-13): penalise only the EXCESS over
+        # the PLAN's own acceleration. A short loud note needs high accel to
+        # reach its calibrated speed inside the beat — neither the planner
+        # nor any residual can lower that, so grading against MOVE_ACCEL
+        # charged short notes a constant unremovable penalty (the same
+        # disease the duration-aware dynamics fix removed: an unsatisfiable
+        # term is pure noise in the objective, and its gradient leaks into
+        # behaviour). The zero-residual plan therefore scores exactly 0, and
+        # a policy that asks for more bow than planned pays for exactly the
+        # extra acceleration that choice demands. Softer-than-plan attacks
+        # earn nothing here — attack_quality already hears them.
         accel = exec_stroke.accel
+        plan_length = abs(plan_stroke.u_end - plan_stroke.u_start) * PMP.BOW_LENGTH
+        accel_needed = max(
+            PMP.MOVE_ACCEL,
+            PMP.solve_stroke(plan_length, plan_stroke.duration).accel)
+        # Fixed denominator: one m/s² of excess costs the same on every note.
+        # Normalising by (max - needed) made the price explode as needed
+        # approached the ceiling — a cliff on short notes, not a gradient.
         r_onset = -float(np.clip(
-            (accel - PMP.MOVE_ACCEL) / max(ACCEL_MAX_FOR_DYNAMICS - PMP.MOVE_ACCEL, 1e-6),
+            (accel - accel_needed)
+            / max(ACCEL_MAX_FOR_DYNAMICS - PMP.MOVE_ACCEL, 1e-6),
             0.0, 1.0))
 
         # A segment slower than the calibrated floor does not make the string
@@ -1075,6 +1133,7 @@ class PieceResidualEnv(gym.Env):
             "tone": float(tone), "window_fill": fill,
             "r_dynamic": r_dynamic, "r_bow": r_bow,
             "r_smooth": r_smooth, "err_db": float(err_db),
+            "zone_cap_db": float(zone_cap_db),
             "r_defect": float(r_defect), "r_onset": float(r_onset),
             "r_envelope": float(r_envelope), "r_speak": float(r_speak),
             "n_segments": len(exec_stroke.segments),
@@ -1131,8 +1190,7 @@ class PieceResidualEnv(gym.Env):
             self._last_q,
             self._ema,
             self._i / max(len(self.plan), 1),
-            float(self._prev_action[0]),
-            float(self._prev_action[1]),
+            *[float(a) for a in self._prev_action],
         ], dtype=np.float32)
 
     # ── Gymnasium API ─────────────────────────────────────────────
