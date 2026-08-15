@@ -1,0 +1,738 @@
+{
+  "_comment": [
+    "Bowing found by bowing_search.py at --speed-scale 1.3 --articulation-ref 1.0, scored on the real planner's output.",
+    "result: RETAKE 1  SHRINK 1  CAP 131  DISTRIB 2 (cost 16.75)",
+    "Groups the search left to the planner are omitted, so it keeps the freedom to flip out of trouble where that is the better move.",
+    "Key is 'bow' (down|up); indices are pre-merge score order."
+  ],
+  "notes": [
+    {
+      "index": 0,
+      "bow": "down"
+    },
+    {
+      "index": 1,
+      "bow": "up"
+    },
+    {
+      "index": 2,
+      "bow": "down"
+    },
+    {
+      "index": 3,
+      "bow": "up"
+    },
+    {
+      "index": 4,
+      "bow": "down"
+    },
+    {
+      "index": 5,
+      "bow": "up"
+    },
+    {
+      "index": 6,
+      "bow": "down"
+    },
+    {
+      "index": 7,
+      "bow": "up"
+    },
+    {
+      "index": 8,
+      "bow": "down"
+    },
+    {
+      "index": 9,
+      "bow": "up"
+    },
+    {
+      "index": 10,
+      "bow": "up"
+    },
+    {
+      "index": 11,
+      "bow": "up"
+    },
+    {
+      "index": 12,
+      "bow": "down"
+    },
+    {
+      "index": 13,
+      "bow": "up"
+    },
+    {
+      "index": 14,
+      "bow": "down"
+    },
+    {
+      "index": 15,
+      "bow": "up"
+    },
+    {
+      "index": 16,
+      "bow": "down"
+    },
+    {
+      "index": 17,
+      "bow": "up"
+    },
+    {
+      "index": 18,
+      "bow": "down"
+    },
+    {
+      "index": 19,
+      "bow": "up"
+    },
+    {
+      "index": 20,
+      "bow": "down"
+    },
+    {
+      "index": 21,
+      "bow": "up"
+    },
+    {
+      "index": 22,
+      "bow": "down"
+    },
+    {
+      "index": 23,
+      "bow": "up"
+    },
+    {
+      "index": 24,
+      "bow": "down"
+    },
+    {
+      "index": 25,
+      "bow": "up"
+    },
+    {
+      "index": 26,
+      "bow": "down"
+    },
+    {
+      "index": 27,
+      "bow": "up"
+    },
+    {
+      "index": 28,
+      "bow": "down"
+    },
+    {
+      "index": 29,
+      "bow": "down"
+    },
+    {
+      "index": 30,
+      "bow": "up"
+    },
+    {
+      "index": 31,
+      "bow": "down"
+    },
+    {
+      "index": 32,
+      "bow": "up"
+    },
+    {
+      "index": 33,
+      "bow": "down"
+    },
+    {
+      "index": 34,
+      "bow": "up"
+    },
+    {
+      "index": 35,
+      "bow": "down"
+    },
+    {
+      "index": 36,
+      "bow": "up"
+    },
+    {
+      "index": 37,
+      "bow": "down"
+    },
+    {
+      "index": 38,
+      "bow": "up"
+    },
+    {
+      "index": 39,
+      "bow": "down"
+    },
+    {
+      "index": 40,
+      "bow": "up"
+    },
+    {
+      "index": 41,
+      "bow": "up"
+    },
+    {
+      "index": 42,
+      "bow": "down"
+    },
+    {
+      "index": 43,
+      "bow": "up"
+    },
+    {
+      "index": 44,
+      "bow": "down"
+    },
+    {
+      "index": 45,
+      "bow": "down"
+    },
+    {
+      "index": 46,
+      "bow": "up"
+    },
+    {
+      "index": 47,
+      "bow": "down"
+    },
+    {
+      "index": 48,
+      "bow": "up"
+    },
+    {
+      "index": 49,
+      "bow": "up"
+    },
+    {
+      "index": 50,
+      "bow": "down"
+    },
+    {
+      "index": 51,
+      "bow": "up"
+    },
+    {
+      "index": 52,
+      "bow": "down"
+    },
+    {
+      "index": 53,
+      "bow": "up"
+    },
+    {
+      "index": 54,
+      "bow": "down"
+    },
+    {
+      "index": 55,
+      "bow": "up"
+    },
+    {
+      "index": 56,
+      "bow": "down"
+    },
+    {
+      "index": 57,
+      "bow": "down"
+    },
+    {
+      "index": 58,
+      "bow": "down"
+    },
+    {
+      "index": 59,
+      "bow": "up"
+    },
+    {
+      "index": 60,
+      "bow": "down"
+    },
+    {
+      "index": 61,
+      "bow": "up"
+    },
+    {
+      "index": 62,
+      "bow": "down"
+    },
+    {
+      "index": 63,
+      "bow": "up"
+    },
+    {
+      "index": 64,
+      "bow": "down"
+    },
+    {
+      "index": 65,
+      "bow": "up"
+    },
+    {
+      "index": 66,
+      "bow": "down"
+    },
+    {
+      "index": 67,
+      "bow": "up"
+    },
+    {
+      "index": 68,
+      "bow": "down"
+    },
+    {
+      "index": 69,
+      "bow": "up"
+    },
+    {
+      "index": 70,
+      "bow": "down"
+    },
+    {
+      "index": 71,
+      "bow": "up"
+    },
+    {
+      "index": 72,
+      "bow": "down"
+    },
+    {
+      "index": 73,
+      "bow": "up"
+    },
+    {
+      "index": 74,
+      "bow": "down"
+    },
+    {
+      "index": 75,
+      "bow": "up"
+    },
+    {
+      "index": 76,
+      "bow": "down"
+    },
+    {
+      "index": 77,
+      "bow": "up"
+    },
+    {
+      "index": 78,
+      "bow": "down"
+    },
+    {
+      "index": 79,
+      "bow": "up"
+    },
+    {
+      "index": 80,
+      "bow": "down"
+    },
+    {
+      "index": 81,
+      "bow": "up"
+    },
+    {
+      "index": 82,
+      "bow": "down"
+    },
+    {
+      "index": 83,
+      "bow": "down"
+    },
+    {
+      "index": 84,
+      "bow": "down"
+    },
+    {
+      "index": 85,
+      "bow": "up"
+    },
+    {
+      "index": 86,
+      "bow": "down"
+    },
+    {
+      "index": 87,
+      "bow": "up"
+    },
+    {
+      "index": 88,
+      "bow": "down"
+    },
+    {
+      "index": 89,
+      "bow": "up"
+    },
+    {
+      "index": 90,
+      "bow": "down"
+    },
+    {
+      "index": 91,
+      "bow": "up"
+    },
+    {
+      "index": 92,
+      "bow": "down"
+    },
+    {
+      "index": 93,
+      "bow": "up"
+    },
+    {
+      "index": 94,
+      "bow": "down"
+    },
+    {
+      "index": 95,
+      "bow": "up"
+    },
+    {
+      "index": 96,
+      "bow": "down"
+    },
+    {
+      "index": 97,
+      "bow": "up"
+    },
+    {
+      "index": 98,
+      "bow": "down"
+    },
+    {
+      "index": 99,
+      "bow": "up"
+    },
+    {
+      "index": 100,
+      "bow": "down"
+    },
+    {
+      "index": 101,
+      "bow": "up"
+    },
+    {
+      "index": 102,
+      "bow": "down"
+    },
+    {
+      "index": 103,
+      "bow": "up"
+    },
+    {
+      "index": 104,
+      "bow": "down"
+    },
+    {
+      "index": 105,
+      "bow": "up"
+    },
+    {
+      "index": 106,
+      "bow": "down"
+    },
+    {
+      "index": 107,
+      "bow": "up"
+    },
+    {
+      "index": 108,
+      "bow": "down"
+    },
+    {
+      "index": 109,
+      "bow": "up"
+    },
+    {
+      "index": 110,
+      "bow": "down"
+    },
+    {
+      "index": 111,
+      "bow": "up"
+    },
+    {
+      "index": 112,
+      "bow": "down"
+    },
+    {
+      "index": 113,
+      "bow": "up"
+    },
+    {
+      "index": 114,
+      "bow": "down"
+    },
+    {
+      "index": 115,
+      "bow": "up"
+    },
+    {
+      "index": 116,
+      "bow": "down"
+    },
+    {
+      "index": 117,
+      "bow": "up"
+    },
+    {
+      "index": 118,
+      "bow": "down"
+    },
+    {
+      "index": 119,
+      "bow": "up"
+    },
+    {
+      "index": 120,
+      "bow": "down"
+    },
+    {
+      "index": 121,
+      "bow": "up"
+    },
+    {
+      "index": 122,
+      "bow": "down"
+    },
+    {
+      "index": 123,
+      "bow": "up"
+    },
+    {
+      "index": 124,
+      "bow": "down"
+    },
+    {
+      "index": 125,
+      "bow": "up"
+    },
+    {
+      "index": 126,
+      "bow": "down"
+    },
+    {
+      "index": 127,
+      "bow": "up"
+    },
+    {
+      "index": 128,
+      "bow": "down"
+    },
+    {
+      "index": 129,
+      "bow": "up"
+    },
+    {
+      "index": 130,
+      "bow": "down"
+    },
+    {
+      "index": 131,
+      "bow": "up"
+    },
+    {
+      "index": 132,
+      "bow": "down"
+    },
+    {
+      "index": 133,
+      "bow": "up"
+    },
+    {
+      "index": 134,
+      "bow": "down"
+    },
+    {
+      "index": 135,
+      "bow": "up"
+    },
+    {
+      "index": 136,
+      "bow": "down"
+    },
+    {
+      "index": 137,
+      "bow": "up"
+    },
+    {
+      "index": 138,
+      "bow": "down"
+    },
+    {
+      "index": 139,
+      "bow": "up"
+    },
+    {
+      "index": 140,
+      "bow": "down"
+    },
+    {
+      "index": 141,
+      "bow": "up"
+    },
+    {
+      "index": 142,
+      "bow": "down"
+    },
+    {
+      "index": 143,
+      "bow": "up"
+    },
+    {
+      "index": 144,
+      "bow": "down"
+    },
+    {
+      "index": 145,
+      "bow": "up"
+    },
+    {
+      "index": 146,
+      "bow": "down"
+    },
+    {
+      "index": 147,
+      "bow": "up"
+    },
+    {
+      "index": 148,
+      "bow": "down"
+    },
+    {
+      "index": 149,
+      "bow": "up"
+    },
+    {
+      "index": 150,
+      "bow": "down"
+    },
+    {
+      "index": 151,
+      "bow": "up"
+    },
+    {
+      "index": 152,
+      "bow": "down"
+    },
+    {
+      "index": 153,
+      "bow": "up"
+    },
+    {
+      "index": 154,
+      "bow": "down"
+    },
+    {
+      "index": 155,
+      "bow": "up"
+    },
+    {
+      "index": 156,
+      "bow": "down"
+    },
+    {
+      "index": 157,
+      "bow": "up"
+    },
+    {
+      "index": 158,
+      "bow": "down"
+    },
+    {
+      "index": 159,
+      "bow": "up"
+    },
+    {
+      "index": 160,
+      "bow": "down"
+    },
+    {
+      "index": 161,
+      "bow": "up"
+    },
+    {
+      "index": 162,
+      "bow": "down"
+    },
+    {
+      "index": 163,
+      "bow": "up"
+    },
+    {
+      "index": 164,
+      "bow": "down"
+    },
+    {
+      "index": 165,
+      "bow": "up"
+    },
+    {
+      "index": 166,
+      "bow": "down"
+    },
+    {
+      "index": 167,
+      "bow": "up"
+    },
+    {
+      "index": 168,
+      "bow": "down"
+    },
+    {
+      "index": 169,
+      "bow": "up"
+    },
+    {
+      "index": 170,
+      "bow": "down"
+    },
+    {
+      "index": 171,
+      "bow": "up"
+    },
+    {
+      "index": 172,
+      "bow": "down"
+    },
+    {
+      "index": 173,
+      "bow": "up"
+    },
+    {
+      "index": 174,
+      "bow": "down"
+    },
+    {
+      "index": 175,
+      "bow": "up"
+    },
+    {
+      "index": 176,
+      "bow": "down"
+    },
+    {
+      "index": 177,
+      "bow": "up"
+    },
+    {
+      "index": 178,
+      "bow": "down"
+    },
+    {
+      "index": 179,
+      "bow": "up"
+    },
+    {
+      "index": 180,
+      "bow": "down"
+    },
+    {
+      "index": 181,
+      "bow": "up"
+    }
+  ]
+}

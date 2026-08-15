@@ -2474,7 +2474,7 @@ def print_plan(strokes: list[Stroke], notes: list[ScoreNote], meta: dict):
 # step back from the instrument and let the room settle, and it sits INSIDE the
 # recording, so every take carries a noise-floor reference ahead of the music
 # and the input stream is demonstrably running before anything sounds.
-LEAD_IN_SEC = 0.0
+LEAD_IN_SEC = 15.0
 
 # Inherited from recording_a_only rather than duplicated, the same way the
 # waypoints and depth convention are, so the performance script and the data
