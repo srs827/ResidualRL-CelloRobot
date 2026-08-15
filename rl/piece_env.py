@@ -389,7 +389,8 @@ class MockExecutor(ExecutorBase):
     so a depth-sensitive classifier sees a consistent signal.
     """
 
-    def __init__(self, noise: float = 0.02, rng: np.random.Generator | None = None):
+    def __init__(self, noise: float = 0.02, rng: np.random.Generator | None = None,
+                 mic_offset_db: float | None = None):
         self.noise = noise
         self.rng = rng or np.random.default_rng()
         # Synthesize a level from the fitted loudness model so the closed-loop
@@ -400,6 +401,20 @@ class MockExecutor(ExecutorBase):
             self._loudness = get_model()
         except FileNotFoundError:
             self._loudness = None
+        # The mock must report in the MIC frame, like HardwareExecutor does:
+        # predict_dbfs() is model-frame, but zone_reward() subtracts
+        # gain_offset_db from every reading on the way in. Emitting model-frame
+        # dBFS made mock strokes grade a constant gain_offset_db too quiet --
+        # at the 8/14 value of +6.77 that pinned r_dynamic at ~0.00 on the
+        # stock entry points (measured: mean r_dynamic 0.966 at offset 0,
+        # 0.188 at +4.20, 0.002 at +6.77), i.e. half the objective was dead in
+        # mock. Simulate the hot mic here so exactly one correction is active
+        # and the mock exercises the same path the real chain does.
+        # Callers who need a KNOWN synthetic offset (calibrate_gain's
+        # known-answer test) pass mic_offset_db explicitly.
+        self.mic_offset_db = float(
+            getattr(self._loudness, "gain_offset_db", 0.0)
+            if mic_offset_db is None else mic_offset_db)
 
     def execute(self, stroke: ExecStroke) -> StrokeResult:
         n = lambda s: 1.0 + self.noise * self.rng.standard_normal() * s
@@ -415,7 +430,8 @@ class MockExecutor(ExecutorBase):
             # Model prediction plus its own residual scatter, so the mock is
             # no more precise than the real measurement it stands in for.
             dbfs = (self._loudness.predict_dbfs(mean_speed, stroke.depth)
-                    + self._loudness.residual_sd_db * self.rng.standard_normal())
+                    + self._loudness.residual_sd_db * self.rng.standard_normal()
+                    + self.mic_offset_db)
 
         return StrokeResult(
             audio=None,

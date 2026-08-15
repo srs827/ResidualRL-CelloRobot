@@ -438,25 +438,12 @@ def main():
         scorer = AsyncScorer(RealScorer())
     else:
         from rl.piece_env import MockExecutor, MockScorer
+        # MockExecutor emits MIC-frame dBFS natively (mic_offset_db), so the
+        # mock grades on the same frame as the real chain and a driver
+        # checkpoint sees unbiased err obs. The hot-mic wrapper that used to
+        # live here would now apply the offset a second time.
         executor = MockExecutor(rng=np.random.default_rng(args.seed + 1))
         scorer = AsyncScorer(MockScorer(rng=np.random.default_rng(args.seed + 2)))
-        # hot-mic parity with the real chain (see train_piece_logged):
-        # without it every mock stroke grades gain_offset_db too quiet and
-        # a driver checkpoint sees err obs biased by the same amount
-        try:
-            from rl.loudness import LoudnessModel
-            _off = float(getattr(LoudnessModel(), "gain_offset_db", 0.0))
-        except Exception:
-            _off = 0.0
-        if _off:
-            _orig_exec = executor.execute
-
-            def _hot(stroke, _o=_orig_exec, _v=_off):
-                r = _o(stroke)
-                if r.measured_dbfs is not None:
-                    r.measured_dbfs = float(r.measured_dbfs) + _v
-                return r
-            executor.execute = _hot
 
     env = _build_env(obs_dim, args.piece, args.mock, args.seed,
                      executor, scorer, args.calibrated_dynamics)

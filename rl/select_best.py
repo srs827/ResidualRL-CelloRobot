@@ -45,27 +45,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-def _hot_mic(executor_like):
-    """Mock parity with the real chain (see train_piece_logged)."""
-    from rl.loudness import LoudnessModel
-    try:
-        off = float(getattr(LoudnessModel(), "gain_offset_db", 0.0))
-    except Exception:
-        off = 0.0
-    if not off:
-        return
-    inner = getattr(executor_like, "inner", executor_like)
-    orig = inner.execute
-
-    def hot(stroke, _o=orig, _off=off):
-        r = _o(stroke)
-        if r.measured_dbfs is not None:
-            r.measured_dbfs = float(r.measured_dbfs) + _off
-        return r
-
-    inner.execute = hot
-
-
 def _build_env(obs_dim, piece, mock, seed, calibrated_dynamics,
                blind_dyn_obs=False, blind_mech_obs=False):
     from rl.piece_env import PieceResidualEnv, OBS_DIM, MockExecutor, MockScorer
@@ -92,8 +71,8 @@ def _build_env(obs_dim, piece, mock, seed, calibrated_dynamics,
                              blind_dyn_obs=blind_dyn_obs,
                              blind_mech_obs=blind_mech_obs,
                              calibrated_dynamics=calibrated_dynamics)
-    if mock:
-        _hot_mic(env.executor)
+    # No mock hot-mic patch here: MockExecutor emits MIC-frame dBFS natively
+    # (mic_offset_db), so adding gain_offset_db again would double-correct.
     return env
 
 

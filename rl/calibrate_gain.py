@@ -54,6 +54,12 @@ if str(REPO_ROOT) not in sys.path:
 
 MODEL_JSON = REPO_ROOT / "SoundClassifier" / "checkpoints" / "loudness_model.json"
 
+# --mock is a plumbing test: the mock is told to read exactly this much hotter
+# than the model, and a correct run recovers it. Deliberately NOT the json's
+# current gain_offset_db — a self-test whose expected answer tracks the value
+# under test cannot fail.
+KNOWN_ANSWER_DB = 4.2
+
 
 def _offset_free_model():
     from rl.loudness import LoudnessModel
@@ -89,19 +95,15 @@ def _residuals_from_episode(args, model):
 
     if args.mock:
         rng = np.random.default_rng(args.seed)
-        executor = MockExecutor(rng=np.random.default_rng(args.seed + 1))
+        # Known-answer run: the mock reads hotter than the model by exactly
+        # KNOWN_ANSWER_DB, which is what this tool should recover. Pin it
+        # explicitly rather than inheriting loudness_model.json's current
+        # gain_offset_db — the whole point is a fixed right answer that does
+        # not move when the json is re-measured (and the model offset is
+        # already zeroed above, since we are estimating it).
+        executor = MockExecutor(rng=np.random.default_rng(args.seed + 1),
+                                mic_offset_db=KNOWN_ANSWER_DB)
         scorer = MockScorer(rng=np.random.default_rng(args.seed + 2))
-        # mirror the real chain: the mock generates MODEL-frame dBFS, a real
-        # mic reads hotter by the true offset — simulate a known 4.2 dB so a
-        # test run has a right answer to recover
-        _orig = executor.execute
-
-        def _hot(stroke):
-            r = _orig(stroke)
-            if r.measured_dbfs is not None:
-                r.measured_dbfs = float(r.measured_dbfs) + 4.2
-            return r
-        executor.execute = _hot
     else:
         from rl.piece_hardware import HardwareExecutor
         from rl.piece_env import RealScorer
@@ -141,7 +143,7 @@ def main():
                     help="explicit real-robot mode (the default when --mock "
                          "is absent; this flag just makes it visible)")
     ap.add_argument("--mock", action="store_true",
-                    help="plumbing test only (known answer +4.2)")
+                    help=f"plumbing test only (known answer +{KNOWN_ANSWER_DB})")
     ap.add_argument("--piece", default="MIDI-Files/t1.mid")
     ap.add_argument("--episodes", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
@@ -151,7 +153,8 @@ def main():
     if bool(args.from_log) == bool(args.measure):
         sys.exit("choose exactly one of --from-log / --measure")
     if args.write and args.mock:
-        sys.exit("--write with --mock refused: the mock's +4.2 dB is "
+        sys.exit(f"--write with --mock refused: the mock's "
+                 f"+{KNOWN_ANSWER_DB} dB is "
                  "synthetic (a known-answer plumbing test) and would "
                  "overwrite a REAL measured offset in loudness_model.json")
     if args.from_log:

@@ -256,31 +256,20 @@ def _apply_reward_weights():
     return changes
 
 
-def _patch_mock_executor():
-    """Make the mock emit MIC-frame dBFS, like the real chain does.
+def _report_mock_frame():
+    """MockExecutor emits MIC-frame dBFS natively since the frame fix.
 
-    MockExecutor generates loudness in the MODEL frame, but since 2026-08-12
-    zone_reward() subtracts loudness_model.json's gain_offset_db from every
-    reading — correct for the hot real mic, but it judges an unpatched mock
-    a constant gain_offset_db too quiet. Simulate the hot mic instead so the
-    correction path is exercised end-to-end. No-op when the offset is 0.
+    This used to install a HotMicMockExecutor subclass, because the mock
+    generated MODEL-frame loudness while zone_reward() subtracts
+    loudness_model.json's gain_offset_db from every reading — so an
+    unpatched mock graded a constant gain_offset_db too quiet. That is now
+    fixed at the source (MockExecutor.mic_offset_db), which makes the stock
+    entry points correct in mock too; patching here as well would subtract
+    the offset twice. Just record what the mock is simulating.
     """
     off = SUITE.get("loudness_gain_offset_db", 0.0)
     if not off:
         return
-    import rl.piece_env as pe
-
-    class HotMicMockExecutor(pe.MockExecutor):
-        def execute(self, stroke):
-            r = super().execute(stroke)
-            if r.measured_dbfs is not None:
-                r.measured_dbfs = float(r.measured_dbfs) + off
-            return r
-
-    pe.MockExecutor = HotMicMockExecutor
-    # train_piece binds the name at import (from rl.piece_env import ...)
-    # and builds the executor itself, so patch its namespace too.
-    tp.MockExecutor = HotMicMockExecutor
     print(f"mock executor simulates the hot mic (+{off:.2f} dB, from "
           f"loudness_model gain_offset_db) so zone grading matches the "
           f"real chain")
@@ -388,7 +377,7 @@ if __name__ == "__main__":
     if "--real" in sys.argv:
         _patch_hardware_executor()
     else:
-        _patch_mock_executor()
+        _report_mock_frame()
     if DRIVER:
         from rl.driver_piece import make_factory
         tp.PieceResidualEnv = make_factory(

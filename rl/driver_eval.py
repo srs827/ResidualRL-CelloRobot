@@ -146,22 +146,13 @@ def main():
             dbfs_calib_db=args.dbfs_calib_db,
             calibrated_dynamics=args.calibrated_dynamics,
         )
-        # Mock parity with the real chain: MockExecutor emits MODEL-frame
-        # dBFS but zone_reward() subtracts the json gain_offset_db (hot real
-        # mic). Simulate the hot mic so mock grading matches real grading.
+        # MockExecutor emits MIC-frame dBFS natively (mic_offset_db), so mock
+        # grading already matches real grading. The hot-mic patch that used to
+        # live here would now add the json gain_offset_db a second time.
         model_off = getattr(env, "model_gain_offset_db", 0.0)
         if args.mock and model_off:
-            inner = env.executor.inner
-            _orig_exec = inner.execute
-
-            def _hot_execute(stroke, _o=_orig_exec, _off=model_off):
-                r = _o(stroke)
-                if r.measured_dbfs is not None:
-                    r.measured_dbfs = float(r.measured_dbfs) + _off
-                return r
-
-            inner.execute = _hot_execute
-            print(f"mock hot-mic patch: +{model_off:.2f} dB on generated dBFS")
+            print(f"mock simulates the hot mic: +{model_off:.2f} dB on "
+                  f"generated dBFS")
 
         model = SAC.load(args.checkpoint, env=None, device="cpu")
         if model.observation_space.shape != env.observation_space.shape:
