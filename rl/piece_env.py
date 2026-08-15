@@ -1028,7 +1028,7 @@ class PieceResidualEnv(gym.Env):
             # speed tops out at accel_max*T/4, so its level tops out at what
             # the loudness model predicts for that speed. Grading an absolute
             # zone above that cap charged an unremovable penalty — the same
-            # disease the open-loop branch above already fixed. When the
+            # failure mode the open-loop branch above already fixed. When the
             # written zone is unreachable, LOWER THE FLOOR to the reachable
             # region but KEEP THE WRITTEN CEILING: anything louder than the
             # model's cap is strictly closer to what the composer asked for,
@@ -1087,7 +1087,7 @@ class PieceResidualEnv(gym.Env):
         # reach its calibrated speed inside the beat — neither the planner
         # nor any residual can lower that, so grading against MOVE_ACCEL
         # charged short notes a constant unremovable penalty (the same
-        # disease the duration-aware dynamics fix removed: an unsatisfiable
+        # failure mode the duration-aware dynamics fix removed: an unsatisfiable
         # term is pure noise in the objective, and its gradient leaks into
         # behaviour). The zero-residual plan therefore scores exactly 0, and
         # a policy that asks for more bow than planned pays for exactly the
