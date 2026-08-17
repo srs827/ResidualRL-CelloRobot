@@ -368,4 +368,7 @@ def _as_plan_stroke(s: ExecStroke):
         dynamic=PMP.velocity_to_dynamic(PMP.volume_to_velocity(s.volume_target)),
         segments=list(s.segments),
         retake_from=s.retake_from,
+        # Without this the player's pre-start lead defaults to 0 and every
+        # retaken note begins a full retake late (writeup-aug17 bug).
+        retake_time=getattr(s, "retake_time", 0.0),
     )

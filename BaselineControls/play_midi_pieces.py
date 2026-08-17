@@ -3187,7 +3187,8 @@ def main(argv=None):
                          servo_lookahead=args.servo_lookahead)
     try:
         player.prepare(strokes[0])
-        input("\nPress ENTER to play (Ctrl+C to abort)...")
+        if not args.yes:
+            input("\nPress ENTER to play (Ctrl+C to abort)...")
         elapsed = player.play(strokes, total, lead_in=args.lead_in)
 
         print(f"\nDone in {elapsed:.2f} s (planned {total-2.0:.2f} s).")
