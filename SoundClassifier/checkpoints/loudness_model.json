@@ -48,6 +48,6 @@
     0.09,
     0.25
   ],
-  "gain_offset_db": 4.2,
-  "gain_offset_note": "Measured 2026-08-11: this mic/gain reads 4.20 dB hotter than the rig that recorded dataset_a_final (strokes at -17.6 dBFS vs a predicted -21.8). Re-measure whenever the audio path changes; zones are absolute dBFS and shift bodily with gain."
+  "gain_offset_db": 5.22,
+  "gain_offset_note": "Measured 2026-08-15 via rl/calibrate_gain.py (real zero-residual x1 on t1.mid): median residual vs offset-free model, sd 1.64, n 25. Previous value +6.77. Zones are absolute dBFS \u2014 re-measure whenever the audio path changes."
 }
