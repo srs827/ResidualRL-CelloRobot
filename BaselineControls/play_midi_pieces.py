@@ -457,7 +457,39 @@ DEPTH_WEIGHT = 1.0
 # covering L metres in T seconds needs at least 4L/T^2, so a 0.08 s note needs
 # several m/s^2 no matter how short the stroke. ACCEL_MAX is the ceiling the
 # planner is allowed to raise to, and stroke lengths are cut before it.
-ACCEL_MAX = 4.0     # m/s^2
+ACCEL_MAX = 6.0     # m/s^2
+# Raised from 4.0 on 2026-08-17. 4.0 was a conservative choice, not a hardware
+# limit (a UR5e does far more at the tool), and it was costing two things:
+#
+#   1. It ate 46% of the residual policy's UPWARD speed authority. The policy
+#      asks for length * (1 + a*0.35); solve_stroke then cuts the length back
+#      to what 4LT^-2 <= accel_max allows, so on short notes the request was
+#      silently discarded. Measured on yunpiece.mxl: a=+1 delivered a median
+#      0.1109 m/s where the residual asked for 0.1381. At 6.0 and above the
+#      full range arrives. Every training run so far trained with half its
+#      speed range clipped away.
+#   2. Bow REVERSAL costs 2v/a, and this piece reverses 178 times in 42 s. At
+#      4.0 that is ~51 ms of turnaround inside a 111 ms note -- nearly half of
+#      each fast note spent not sounding, which is why the fast passage would
+#      not hold its rhythm at any tempo.
+#
+# 8.0 was tried first and MEASURED WORSE on hardware 2026-08-17: period_corr
+# fell 0.911 -> 0.846 overall and 0.896 -> 0.813 on the fast 100-200 ms notes,
+# while long notes were untouched (0.970 -> 0.967). Damage confined to the
+# notes that actually spend the extra acceleration is the bow-bounce
+# signature -- above ~8 m/s^2 the bow chatters at note starts instead of
+# gripping. (The CNN judge called that take BETTER, 0.479 vs 0.473, which is
+# the third time it disagreed with the physical measures and the ear.)
+#
+# 6.0 is the smallest value that still buys the FULL speed range -- the
+# residual's +-35% saturates exactly here -- so it takes the whole policy
+# benefit while staying as far from the bounce threshold as that allows.
+# Turnaround is ~34 ms rather than 4.0's ~51 ms. Do not raise without
+# re-measuring period_corr on the fast passage.
+#
+# NOTE: the reward's price for harsh attacks used to be normalised by this
+# same constant, so raising it made harsh attacks cheaper. That is now
+# pinned separately as piece_env.ONSET_ACCEL_SCALE.
 
 # Target ratio of commanded PEAK speed to the stroke's mean speed.
 #
@@ -2620,7 +2652,19 @@ class PiecePlayer:
             # slowed to near zero twice per note -- audible as the note
             # breaking into pieces. 25 mm lets the controller carry velocity
             # through the junction, which is the whole point of the envelope.
-            blend = 0.0 if i == len(stroke.segments) - 1 else min(0.3 * length, 0.025)
+            # 0.3 -> 0.45 of the segment, 2026-08-17. The 25 mm cap was
+            # raised for ~56 mm envelope segments, where 0.3*length = 17 mm.
+            # The RL env's segments are 16-35 mm, so 0.3*length gives only
+            # 4.8-10.6 mm -- back at the 5 mm this comment already records as
+            # too small to carry velocity. Measured: 3-segment notes overran
+            # their duration by 120 ms, cut to 55 ms by raising junction
+            # accel; this chases the rest. 0.45 stays under the geometric
+            # limit of half a segment, and is additionally clamped by the NEXT
+            # segment so two adjacent blends cannot overlap.
+            nxt = stroke.segments[i + 1] if i + 1 < len(stroke.segments) else None
+            nxt_len = (abs(nxt.u_end - nxt.u_start) * BOW_LENGTH) if nxt else length
+            blend = (0.0 if i == len(stroke.segments) - 1
+                     else min(0.45 * length, 0.45 * nxt_len, 0.025))
             path.append(list(pose) + [segment.speed, segment.accel, blend])
 
         try:

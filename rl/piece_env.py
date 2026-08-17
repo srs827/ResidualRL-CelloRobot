@@ -50,6 +50,7 @@ stubbed in mock mode when the optional hardware profile is not installed).
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import sys
 from dataclasses import dataclass, field
@@ -214,11 +215,34 @@ DEFECT_FEATURES = [
     # of staying quiet and scratchy) is tuned here, via hnr's weight.
     # (weight column added by Zixian, 2026-08-13; defaults unchanged.)
     ("hnr_db_mean",        +1, 12.0,  3.0, 1.0),   # scratchy when low
-    ("voiced_fraction",    +1,  0.98, 0.70, 1.0),  # string not speaking
+    # Weight 0: SATURATED, not informative. Measured 1.000 on both the .mid
+    # and .mxl takes (2026-08-17), so it was contributing a constant 1/5 of
+    # r_defect and diluting the features that do discriminate. Left in the
+    # list so it keeps being logged -- it may still fire on a genuinely dead
+    # stroke -- but it no longer votes.
+    ("voiced_fraction",    +1,  0.98, 0.70, 0.0),  # string not speaking
     ("attack_overshoot",   -1,  0.85, 1.40, 1.0),  # harsh attack
     ("f0_stability_cents", -1,  1.0, 20.0, 1.0),   # pitch wobble
+    # Cycle-to-cycle waveform correlation at the open-A f0 (rl/harmonicity).
+    # Added 2026-08-17 because the metrics above cannot do this job on the
+    # notes that need it: hnr/voiced_fraction come from an STFT at n_fft=1024
+    # (23.2 ms) and yunpiece's fast notes are 8-23 ms, and the CNN judge
+    # scored two takes a listener called "much much better" apart at 0.474 vs
+    # 0.473. period_corr is time-domain and needs only two periods (9 ms), and
+    # on the same pair it read 0.622 vs 0.911.
+    #
+    # Bounds from that measurement: long notes, where both takes sound fine,
+    # sit at 0.96-0.97 -- so `good` is 0.95 and the term saturates rather than
+    # chasing the last percent. `bad` is 0.60, just under the .mid take's
+    # 0.622 overall. The discrimination is concentrated in the 100-200 ms
+    # band (0.787 vs 0.896), which is exactly the fast-passage regime.
+    ("period_corr",        +1,  0.95, 0.60, 1.0),  # not speaking / rubbing
 ]
-W_DEFECT = 0.15   # scaled against the tone term; applied as a penalty
+W_DEFECT = 0.35   # scaled against the tone term; applied as a penalty
+# Raised from 0.15 on 2026-08-17, the other half of the same rebalance. These
+# features are physics, they work at any note length, and on the .mid/.mxl
+# pair they were the terms that got the ordering right. With the CNN now
+# discounted on short notes, something has to carry the tone signal there.
 
 # ── Onset acceleration penalty ────────────────────────────────────
 # Nothing in the reward has ever priced the harshness of a bow change. Each
@@ -240,7 +264,30 @@ W_ENVELOPE = 0.05
 # residual range, not a term that currently does anything -- and note it prices
 # COMMANDED speed, so it would not catch an amplitude collapse arriving by any
 # other route. The reward is still blind on the audio side (RL_METHOD.md #2).
-W_SPEAK = 0.12
+W_SPEAK = 0.35   # per-SEGMENT starving: the policy owns this, so price it.
+# Raised from 0.12 on 2026-08-17. 0.12 was chosen while the term was dormant
+# (it skipped single-segment strokes and read commanded speed), so it was
+# never a measured value. It must outweigh what a lopsided envelope wins
+# elsewhere: r_dynamic alone is worth up to W_DYNAMIC (0.25), and the trained
+# ep0100 policy took a segment-starving envelope on every long note and still
+# came out ahead. Safe to raise: exactly 0 for any stroke whose segments all
+# clear the floor, so it cannot penalise a stroke that is working.
+W_SPEAK_MEAN = 0.0
+# DIAGNOSTIC ONLY -- logged, never priced. Measured
+# 2026-08-17: the policy cannot change a stroke's MEAN speed at all. The
+# speed residuals are per-segment weights and are normalised
+# (`fractions = weights / weights.sum()`), so they redistribute bow WITHIN a
+# stroke while its total length and duration stay the planner's. Verified
+# empirically: full positive speed residual on yunpiece leaves median mean
+# speed at 0.0768 m/s, unchanged, with 70% of strokes still under SPEED_MIN.
+#
+# So a stroke below the speaking floor is below it for reasons no action can
+# touch, and raising this weight would only add a constant unremovable
+# penalty -- the same unsatisfiable-term failure the duration-aware dynamics
+# and onset fixes were written to remove. The term now fires correctly (see
+# _reward), which makes the failure VISIBLE in the logs; acting on it needs
+# mean speed or stroke length in the action space, or a floor inside
+# solve_stroke's length capping. Until then this stays a measurement.
 
 # A dynamic error of this many dB zeroes the dynamic reward term.
 DYNAMIC_FULL_ERR_DB = 3.0
@@ -276,12 +323,40 @@ CLASSIFIER_WINDOW_SEC = 0.5
 # the window shrinks — fewer pitch periods for F0 stability and HNR. Measured
 # on the standard config that costs little: rho 0.824 at 0.10 s against 0.835
 # at 0.50 s. Hence a light floor rather than the heavy shrink this started as.
-WINDOW_FILL_FLOOR = 0.85
+WINDOW_FILL_FLOOR = 0.35
+# Lowered from 0.85 on 2026-08-17. The 0.85 was set from a measurement that
+# sliced SUSTAINED strokes to different lengths and found Spearman rho barely
+# moving (0.824 at 0.10 s vs 0.835 at 0.50 s) -- a fair test of whether the
+# judge can RANK clean material, and it can. It is not a test of whether the
+# judge can hear a real short note in a real passage, where the window also
+# contains the neighbours bleeding in.
+#
+# Measured directly on 2026-08-17, .mid vs .mxl on the same rig minutes apart,
+# a pair a listener called "much much better" apart: the judge scored them
+# 0.474 vs 0.473 across 182 notes, and on mid-take slices 0.524 vs 0.406 --
+# i.e. blind, then INVERTED. Meanwhile every physical measure ordered them
+# correctly (period_corr 0.700 -> 0.932, hnr 6.94 -> 8.94).
+#
+# So the judge is trusted where it was validated -- long notes, fill -> 1 --
+# and shrunk hard toward neutral as the note shortens. This is deliberately
+# not a blanket cut to W_QUALITY: the CNN is the only term that carries human
+# taste, and on sustained notes it earns its weight.
 
 # The acceleration ceiling solve_stroke plans against. Used to work out the
 # fastest MEAN speed a note of a given duration can reach (accel_max*T/4), so
 # the dynamic target is never set beyond what physics allows.
 ACCEL_MAX_FOR_DYNAMICS = PMP.ACCEL_MAX
+
+# The PRICE of a harsh attack, deliberately NOT tied to the machine's limit.
+#
+# r_onset normalises excess acceleration by (ceiling - MOVE_ACCEL). Until
+# 2026-08-17 that ceiling was PMP.ACCEL_MAX, which meant raising the robot's
+# acceleration limit silently made harsh attacks cheaper: going 4.0 -> 12.0
+# grows the denominator 2.8 -> 10.8, so identical excess accel is penalised
+# about 4x less. A mechanical headroom change should not quietly edit the
+# reward's taste. Pinned at the 4.0 this was tuned against; move it only on
+# purpose, and say why.
+ONSET_ACCEL_SCALE = 4.0
 
 # 22 = the original 16 score/state dims + the FULL previous action (6). It
 # was 18 with only prev_action[0:2] — sensible for the old [speed, depth]
@@ -318,6 +393,31 @@ N_ENVELOPE_SEGMENTS = 3
 # segment 0's residual applied to the whole stroke, which is the right reading
 # anyway: a 0.08 s note IS its attack.
 ENVELOPE_MIN_DURATION = 0.40
+
+# What a blended moveL PATH costs per CALL, over and above the motion.
+#
+# A single-segment stroke goes out as a single-pose moveL and lands on time:
+# measured 2026-08-17, median overrun ~2 ms across 157 notes. A 3-segment
+# stroke goes out as moveL(path). That started at 119.9 ms of overrun, but
+# most of it was NOT the API -- it was the junctions changing bow speed at
+# MOVE_ACCEL. Giving interior junctions the accel ceiling took it to 55.5 ms,
+# and widening the blend a further 4 ms, leaving ~51 ms.
+#
+# 51 ms is the floor, and it is the API: an isolated ONE-waypoint moveL(path)
+# measured 51.7 ms in rl/calibrate_timing.py, independently. Two measurements
+# agreeing, on a cost that does not scale with waypoint count or duration,
+# means it is the cost of calling moveL with a path at all rather than with a
+# pose. Unlike the accel-driven part, a fixed cost CAN be planned around.
+#
+# This is not a playback detail. The envelope is the policy's main lever, so
+# every note it shaped ran ~120 ms long DURING TRAINING -- and the reward then
+# graded the audio window, the dBFS and the timing of a note that had overrun
+# its slot. The action was penalised for being used, invisibly. Three runs
+# produced policies worse than the zero-residual baseline.
+#
+# Planning the motion to finish early by this much makes the note land on its
+# written duration, which is what the plan already claims to guarantee.
+PATH_DISPATCH_OVERHEAD_S = 0.051
 
 ACTION_DIM = 2 * N_ENVELOPE_SEGMENTS   # [spd x3, depth x3], each in [-1, 1]
 
@@ -376,6 +476,49 @@ class ExecutorBase:
 
     def close(self):
         pass
+
+
+@contextlib.contextmanager
+def _fft_window_for(af, n_samples: int):
+    """Temporarily shrink audio_features' STFT window to fit a short note.
+
+    The module-level N_FFT/HOP_LENGTH are bound as DEFAULT ARGUMENTS on
+    compute_spectral_flatness/compute_mfcc_stats/compute_log_mel_spectrogram,
+    so rebinding the module globals alone would not reach them -- the
+    __defaults__ tuples have to be patched too, and restored afterwards.
+    A no-op when the note already fills a window.
+    """
+    n_fft = int(af.N_FFT)
+    while n_fft > 256 and n_fft > n_samples:
+        n_fft //= 2
+    if n_fft == af.N_FFT:
+        yield
+        return
+    hop = max(64, n_fft // 4)
+    targets = [getattr(af, n, None) for n in
+               ("compute_spectral_flatness", "compute_mfcc_stats",
+                "compute_log_mel_spectrogram", "compute_hnr",
+                "compute_f0_stability")]
+    saved_glob = (af.N_FFT, af.HOP_LENGTH)
+    saved_def = [(f, f.__defaults__) for f in targets if f is not None]
+    af.N_FFT, af.HOP_LENGTH = n_fft, hop
+    for f, d in saved_def:
+        if not d:
+            continue
+        code = f.__code__
+        names = code.co_varnames[:code.co_argcount]
+        offset = code.co_argcount - len(d)
+        f.__defaults__ = tuple(
+            n_fft if names[offset + i] == "n_fft"
+            else hop if names[offset + i] == "hop_length"
+            else v
+            for i, v in enumerate(d))
+    try:
+        yield
+    finally:
+        af.N_FFT, af.HOP_LENGTH = saved_glob
+        for f, d in saved_def:
+            f.__defaults__ = d
 
 
 class MockExecutor(ExecutorBase):
@@ -596,11 +739,36 @@ class RealScorer:
                                              window_pos=window_pos))
         if audio is not None and len(audio) > 0:
             import audio_features as af
-            scalars = af.extract_scalar_features(
-                np.asarray(audio, dtype=np.float32), sr=af.SR)
+            audio = np.asarray(audio, dtype=np.float32)
+            # 2026-08-17: these features are computed by STFT at af.N_FFT
+            # (1024 = 23.2 ms at 44.1 kHz) on the RAW, unpadded stroke. A
+            # note shorter than one window gets zero-padded up to a single
+            # frame, so hnr_db_mean and voiced_fraction -- the two detectors
+            # that would actually catch a rubbing, non-speaking note -- end
+            # up measuring the padding. yunpiece's short notes land at
+            # 8-23 ms, exactly the strokes that rub. (This is what the
+            # "n_fft=1024 is too large for input signal" warnings were.)
+            #
+            # Shrink the window to fit the note instead: the largest power of
+            # two that fits, floored at 256 (5.8 ms) so there is still enough
+            # resolution for an f0 near the A string's 220 Hz. Frequency
+            # resolution drops, but a coarse reading of a real signal beats a
+            # fine reading of silence.
+            with _fft_window_for(af, len(audio)):
+                scalars = af.extract_scalar_features(audio, sr=af.SR)
             names = af.SCALAR_FEATURE_NAMES
             for feat, *_ in DEFECT_FEATURES:
-                out[feat] = float(scalars[names.index(feat)])
+                if feat in names:
+                    out[feat] = float(scalars[names.index(feat)])
+            # Time-domain harmonicity, which does not go through an STFT and
+            # so still means something on an 8 ms note. period_corr is priced
+            # (it is in DEFECT_FEATURES); the other two are logged only, until
+            # they have been checked against onset-aligned segments --
+            # harmonic_ratio in particular moved the WRONG way on long pp
+            # notes (-0.107), which looks like it penalising quiet rather than
+            # bad, and it would become a second loudness term if priced now.
+            from rl.harmonicity import features as _harm
+            out.update(_harm(audio, sr=af.SR))
         return out
 
 
@@ -826,8 +994,16 @@ class PieceResidualEnv(gym.Env):
         # Each segment therefore gets its own CRUISE speed, scaled by the same
         # peak/mean ratio the whole-stroke solution uses so the two real end
         # ramps are still paid for and the note keeps its duration.
-        mean_speed = length / max(solution.duration, 1e-6)
-        peak_over_mean = (solution.speed / mean_speed) if mean_speed > 1e-6 else 1.0
+        # Aim the MOTION at (duration - dispatch overhead) so the note as
+        # EXECUTED lasts `duration`. Without this the path branch silently
+        # runs ~40 ms/waypoint long.
+        motion_duration = max(solution.duration - PATH_DISPATCH_OVERHEAD_S,
+                              0.25 * solution.duration)
+        seg_duration = motion_duration / n
+
+        mean_speed = length / max(motion_duration, 1e-6)
+        peak_over_mean = ((solution.speed / (length / max(solution.duration, 1e-6)))
+                          if length > 1e-9 else 1.0)
 
         travel = u_end - u_start
         segments, u = [], u_start
@@ -842,8 +1018,20 @@ class PieceResidualEnv(gym.Env):
             seg_depth = float(np.clip(
                 base_depth + float(dep_res[i]) * DEPTH_RESIDUAL_M,
                 DEPTH_LO, DEPTH_HI))
+            # Segment 0's accel is the ATTACK ramp from rest -- leave it as
+            # the planner solved it, since r_onset prices exactly that and a
+            # harder attack is an audible change. Interior junctions are a
+            # different job: the bow is already moving and only needs to CHANGE
+            # speed, and doing that at MOVE_ACCEL (1.20 m/s^2) is slow. A
+            # 0.05 m/s change takes 42 ms, three junctions ~125 ms -- close to
+            # the 120 ms median overrun measured on 3-segment notes
+            # (2026-08-17), which is the whole reason the envelope wrecks
+            # rhythm. Give the junctions the planner's ceiling so the bow can
+            # get to the next cruise speed promptly.
+            seg_accel = solution.accel if i == 0 else max(solution.accel,
+                                                          PMP.ACCEL_MAX)
             segments.append(PMP.Segment(
-                u_start=u, u_end=u_next, speed=cruise, accel=solution.accel,
+                u_start=u, u_end=u_next, speed=cruise, accel=seg_accel,
                 depth=seg_depth, duration=seg_duration))
             u = u_next
         return segments
@@ -1119,7 +1307,7 @@ class PieceResidualEnv(gym.Env):
         # approached the ceiling — a cliff on short notes, not a gradient.
         r_onset = -float(np.clip(
             (accel - accel_needed)
-            / max(ACCEL_MAX_FOR_DYNAMICS - PMP.MOVE_ACCEL, 1e-6),
+            / max(ONSET_ACCEL_SCALE - PMP.MOVE_ACCEL, 1e-6),
             0.0, 1.0))
 
         # A segment slower than the calibrated floor does not make the string
@@ -1130,17 +1318,59 @@ class PieceResidualEnv(gym.Env):
         # the speed weights clip at 0.25..4.0, so a lopsided envelope can still
         # starve a segment. Price the physical cause -- bow too slow to sustain
         # Helmholtz motion -- rather than the specific rendering bug.
-        r_speak = 0.0
-        if len(exec_stroke.segments) > 1:
-            deficits = [
-                np.clip((PMP.SPEED_MIN - sg.speed) / PMP.SPEED_MIN, 0.0, 1.0)
-                for sg in exec_stroke.segments]
-            r_speak = -float(np.mean(deficits))
+        # 2026-08-17: this term was dormant for two independent reasons, and
+        # both had to go before it could fire on the case it exists for.
+        #
+        #   1. `len(segments) > 1` skipped single-segment strokes entirely.
+        #      On yunpiece n_segments averages 1.28, so ~72% of the piece was
+        #      never priced at all.
+        #   2. It read only per-SEGMENT speed. But the sub-speaking speed on
+        #      short notes does not come from a lopsided envelope -- it comes
+        #      from solve_stroke CUTTING STROKE LENGTH to protect rhythm
+        #      ("the note comes out a little quieter"). Past SPEED_MIN it is
+        #      not quieter, it is not a note. That cut shows up in the
+        #      stroke's MEAN speed, which nothing here was looking at.
+        #
+        # Measured on yunpiece before this change: 70% of baseline strokes
+        # below PMP.SPEED_MIN (0.09 m/s, "measured -29.4 dBFS"), r_speak
+        # firing on none of them. The policy trained against a reward that
+        # could not see the piece's dominant failure, and duly learned
+        # negative speed residuals that pushed more strokes under the floor.
+        #
+        # Price the worst of (stroke mean, any segment): a stroke whose mean
+        # clears the floor can still starve one segment, and a stroke whose
+        # segments each clear it cannot have a mean below it.
+        # SPLIT, because the two halves differ in whether the policy can act
+        # on them, and mixing them into one weight prices an unsatisfiable
+        # term alongside a satisfiable one.
+        #
+        #   r_speak (SEGMENT) -- the policy owns this. Segment weights are the
+        #     action; clipped to 0.25..4.0 they can starve one segment while
+        #     the stroke mean stays healthy. Measured on the trained ep0100
+        #     policy: long notes mean 0.1396 m/s (far above the floor) yet
+        #     r_speak fires at -0.021, so every bit of it is segment starving
+        #     -- the "bow stalls mid-note" failure this term was written for,
+        #     recurring because it was under-priced. Weighted to bite.
+        #
+        #   r_speak_mean (STROKE) -- the policy CANNOT act on this. Speed
+        #     residuals are normalised (`fractions = weights / weights.sum()`)
+        #     so they redistribute bow within a stroke and leave its mean
+        #     alone; verified by driving the speed action to +1 and watching
+        #     median mean speed not move. Logged at zero weight: it is a
+        #     measurement of the PLANNER, and pricing it would only add a
+        #     constant the policy cannot reduce.
+        seg_deficits = [np.clip((PMP.SPEED_MIN - sg.speed) / PMP.SPEED_MIN,
+                                0.0, 1.0)
+                        for sg in exec_stroke.segments]
+        r_speak = -float(max(seg_deficits)) if seg_deficits else 0.0
+        r_speak_mean = -float(np.clip(
+            (PMP.SPEED_MIN - exec_stroke.mean_speed) / PMP.SPEED_MIN, 0.0, 1.0))
 
         total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
                  + W_BOW * r_bow + W_SMOOTH * r_smooth
                  - W_DEFECT * r_defect + W_ONSET_ACCEL * r_onset
-                 + W_ENVELOPE * r_envelope + W_SPEAK * r_speak)
+                 + W_ENVELOPE * r_envelope + W_SPEAK * r_speak
+                 + W_SPEAK_MEAN * r_speak_mean)
         components = {
             # `quality` stays the RAW classifier score so logs and the
             # episode summary report what was actually heard; quality_eff is
@@ -1152,6 +1382,7 @@ class PieceResidualEnv(gym.Env):
             "zone_cap_db": float(zone_cap_db),
             "r_defect": float(r_defect), "r_onset": float(r_onset),
             "r_envelope": float(r_envelope), "r_speak": float(r_speak),
+            "r_speak_mean": float(r_speak_mean),
             "n_segments": len(exec_stroke.segments),
             "accel": float(accel),
             "shortfall": shortfall, "total": float(total),
