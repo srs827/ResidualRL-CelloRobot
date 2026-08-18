@@ -457,35 +457,59 @@ DEPTH_WEIGHT = 1.0
 # covering L metres in T seconds needs at least 4L/T^2, so a 0.08 s note needs
 # several m/s^2 no matter how short the stroke. ACCEL_MAX is the ceiling the
 # planner is allowed to raise to, and stroke lengths are cut before it.
-ACCEL_MAX = 4.0     # m/s^2
-# Returned to 4.0 on 2026-08-18 after 6.0 was measured and heard worse on the
-# fast passage. The 8/17 history below is kept because its reasoning is sound
-# and its measurements still stand -- only the conclusion changed.
+ACCEL_MAX = 5.5     # m/s^2
+# Set to 5.5 on 2026-08-18 after a four-point hardware sweep. 5.5 is the
+# SMALLEST ceiling that gives the residual any upward speed authority at all:
+# below 5.0 the plan and the residual are capped at the same place, so
+# v(a=+1) == v(a=0) and the policy's speed lever only points DOWN -- the
+# direction writeup-aug17's listener test ranked worst of five takes.
 #
-# 2026-08-18, yunpiece.mxl baseline, --compile --render baseline, same take
-# length and same session (so mic and rosin are held constant):
+#   ceiling   baseline accel   v(a=0)   v(a=+1)   upward authority
+#   4.0       3.601            0.1109   0.1109    none
+#   4.5       --               0.1248   0.1248    none
+#   5.0       4.322            0.1380   0.1387    ~none  (dominated: pays the
+#                                                  tone cost, buys nothing)
+#   5.5       4.676            0.1380   0.1525    +10.5%
+#   6.0       5.028            0.1380   0.1664    +20.6%
 #
-#     ACCEL_MAX   period_corr mean   p25     drift    listener
-#     4.0         0.942              0.901   7.8 ms   preferred
-#     6.0         0.918              0.855   6.9 ms
+# Note the plan's stroke length saturates at 15.31 mm from 5.0 up, but the
+# COMMANDED acceleration keeps climbing anyway, because the planner spends
+# whatever ceiling it is given on its peak/mean speed ratio. So a higher
+# ceiling is never free, even once length has stopped growing.
 #
-# The gain is concentrated in the WORST quartile, which is the same
-# bow-bounce signature the 8.0 measurement below describes -- 6.0 has it too,
-# just milder. It is a threshold that is approached gradually, not a cliff at
-# 8.0. Rhythm is unaffected either way (0.9 ms apart, both inside the 7 ms
-# the per-note player is documented to track).
+# Baseline takes, --compile --render baseline, period_corr by note length:
 #
-# What this costs, knowingly: item 1 below is still true -- at 4.0 the
-# residual's upward speed range is clipped, a=+1 delivering a median
-# 0.1109 m/s where it asked for 0.1381. We are choosing baseline tone over
-# policy authority because the recording is the near-term deliverable. If the
-# policy later needs that range back, the fix is more bow TIME (--tempo-scale)
-# rather than more acceleration.
+#   setting      fast <150ms   mid    long    all    listener
+#   6.0 t1.00    0.804         0.910  0.973   0.844
+#   4.0 t1.00    0.871         0.904  0.975   0.890
+#   5.5 t1.00    0.900         0.926  0.988   0.916  preferred
+#   5.5 t1.15    0.902         0.941  0.982   0.922  "crunchy/screechy"
 #
-# CAVEAT on the comparison: today's takes record ~3.9 dB hotter than
-# 2026-08-17's (-18.0 vs -21.9 dBFS rms) and nobody has explained why.
-# period_corr improves with SNR, so the 4.0-vs-6.0 ordering (same session,
-# same level) is trustworthy while any comparison ACROSS days is not.
+# Damage from acceleration is confined to notes under 150 ms; mid and long
+# notes are unchanged across the whole range (0.90-0.94 and 0.97-0.99). So
+# the ceiling is a fast-note question only.
+#
+# TWO WARNINGS about that table, both real:
+#
+#   1. The four takes are listed in RECORDING ORDER and their scores rise
+#      monotonically with clock time (12:09, 12:21, 12:38, 12:39). 5.5 also
+#      beat 4.0 on fast notes, which the acceleration story does not predict.
+#      Some or all of the spread may be the instrument warming up rather than
+#      the setting. Nobody has run the control -- re-measuring 6.0 at the END
+#      of a session -- and until someone does, treat the ORDERING here as
+#      unconfirmed and the 5.5 choice as resting on the listener plus the
+#      speed-authority argument above, not on these numbers.
+#   2. period_corr scored the t1.15 take marginally BETTER (0.902 vs 0.900 on
+#      fast notes) than the take the listener called crunchy. That is the
+#      fourth metric/ear disagreement on this piece. Trust the ear.
+#
+# --tempo-scale does NOT substitute for acceleration: at 5.5, going from
+# tempo 1.00 to 1.45 moves the baseline's commanded accel only 4.676 -> 4.478,
+# because the target SPEED comes from the written dynamic rather than from
+# duration, so a longer note is just a longer stroke at the same speed. What
+# tempo does buy is deliverable upward range (v(a=+1) 0.1525 -> 0.1721 at
+# 1.15) and a smaller reversal fraction per note. It was tried at 1.15 and
+# heard worse; left at 1.0.
 #
 # ── history: raised 4.0 -> 6.0 on 2026-08-17, reverted 8/18 ──────────────
 # 4.0 was a conservative choice, not a hardware limit (a UR5e does far more
