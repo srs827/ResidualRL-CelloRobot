@@ -243,6 +243,7 @@ class LoggedEpisodeQualityLogger(tp.EpisodeQualityLogger):
             "reward_overrides": REWARD_OVERRIDES,
         }) + "\n")
         self._episode = 1 + EPISODE_OFFSET
+        self.episode_offset = EPISODE_OFFSET   # console print matches the log
         self._stroke_seq = 0
         self._stroke_in_ep = 0
 
@@ -401,6 +402,61 @@ def _patch_hardware_executor():
                 json.dumps({"episode_offset": EPISODE_OFFSET,
                             "global_episode": ep + EPISODE_OFFSET,
                             "strokes": self._stroke_times}))
+            # Bow motion at 100 Hz, alongside the audio and the window bounds.
+            #
+            # Without this the analysis window cannot be checked offline. The
+            # window is anchored to t_start, stamped just before moveL is
+            # dispatched, and the arm then accelerates out of rest before the
+            # string speaks -- so the window can sit off the note, and on
+            # 2026-08-18 it measured a median 40 ms early (99% of strokes >20
+            # ms, 79% >50 ms) worth a mean 1.74 dB under-read.
+            #
+            # The fix has to key on MOTION, not audio: on real takes, bow
+            # motion onset resolves to an IQR of 5.5 ms where audio onset
+            # detection gives 90 ms (and the writeup records it inventing
+            # 80-107 false onsets per take). The perform path already saves
+            # this; training runs did not, which is why the fix was written,
+            # validated against the WRONG path (perform pre-starts strokes, so
+            # its motion leads the onset while training's follows it), found
+            # neutral, and reverted.
+            #
+            # What it is FOR: rl/reward_noise.py 2026-08-18 showed repeat sd
+            # growing 11x through one episode (0.0115 -> 0.1278 on total
+            # reward at strokes 36/90/145) while the action signal stayed
+            # flat. The first hypothesis was that the analysis window drifts
+            # off the note. This log DISPROVED that, which is what it is for.
+            #
+            # Measured on the first instrumented episode, matching each stroke
+            # to the nearest bow DIRECTION REVERSAL (the exact method -- see
+            # below): reversal minus commanded onset is a median -0.9 ms with
+            # a drift of -0.02 ms/stroke and corr(offset, stroke index)
+            # -0.062. The window tracks the real strokes to about a
+            # millisecond and does not drift. Two earlier readings that said
+            # otherwise (a "median 40 ms early", a "-0.50 ms/stroke drift")
+            # were both artifacts of AUDIO-ENERGY onset detection, which
+            # writeup-aug17 already records inventing 80-107 false onsets per
+            # take. Do not re-derive them.
+            #
+            # Note the detector that matters. First-threshold-crossing of
+            # |bow_speed| does NOT work here: through a continuous passage the
+            # bow never stops between notes, so it latches onto the previous
+            # stroke and reports a spurious ~-94 ms. bow_speed is SIGNED, so
+            # use sign changes -- one reversal per bow stroke, exact.
+            #
+            # So the cause of the repeat-sd growth is still unknown. Note it
+            # cannot be diagnosed from a single episode at all: reward_noise
+            # measures spread across REPLAYS of one stroke, while an episode
+            # gives within-episode spread across different strokes. Within one
+            # episode the loudness residual does not grow with stroke index
+            # (corr 0.008), so whatever it is, it is a between-replay effect.
+            log = getattr(getattr(self, "logger", None), "log", None)
+            if log:
+                try:
+                    np.save(EP_AUDIO_DIR / f"ep{ep:04d}_state{tag}.npy",
+                            np.array(list(log), dtype=object),
+                            allow_pickle=True)
+                except Exception as e:
+                    print(f"(episode state save failed: {e} — continuing)")
             self._chunks = []
             self._stroke_times = []
 

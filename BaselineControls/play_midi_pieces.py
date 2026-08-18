@@ -179,6 +179,7 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import sys
 import time
 import zipfile
@@ -457,9 +458,71 @@ DEPTH_WEIGHT = 1.0
 # covering L metres in T seconds needs at least 4L/T^2, so a 0.08 s note needs
 # several m/s^2 no matter how short the stroke. ACCEL_MAX is the ceiling the
 # planner is allowed to raise to, and stroke lengths are cut before it.
-ACCEL_MAX = 6.0     # m/s^2
-# Raised from 4.0 on 2026-08-17. 4.0 was a conservative choice, not a hardware
-# limit (a UR5e does far more at the tool), and it was costing two things:
+ACCEL_MAX = float(os.environ.get("CELLO_ACCEL_MAX", 5.5))   # m/s^2
+# CELLO_ACCEL_MAX overrides the default for a single process. This exists so a
+# parameter sweep can vary the ceiling WITHOUT rewriting this file between
+# takes: every consumer picks the value up as a def-time default
+# (solve_stroke, BowPlanner.__init__, piece_env.ACCEL_MAX_FOR_DYNAMICS), so
+# editing the source mid-sweep is the only alternative -- and that silently
+# failed on 2026-08-18, because a same-length edit inside one second does not
+# invalidate __pycache__, so several sweep points measured a stale value.
+# Read once at import; unset means the committed default above.
+# Set to 5.5 on 2026-08-18 after a four-point hardware sweep. 5.5 is the
+# SMALLEST ceiling that gives the residual any upward speed authority at all:
+# below 5.0 the plan and the residual are capped at the same place, so
+# v(a=+1) == v(a=0) and the policy's speed lever only points DOWN -- the
+# direction writeup-aug17's listener test ranked worst of five takes.
+#
+#   ceiling   baseline accel   v(a=0)   v(a=+1)   upward authority
+#   4.0       3.601            0.1109   0.1109    none
+#   4.5       --               0.1248   0.1248    none
+#   5.0       4.322            0.1380   0.1387    ~none  (dominated: pays the
+#                                                  tone cost, buys nothing)
+#   5.5       4.676            0.1380   0.1525    +10.5%
+#   6.0       5.028            0.1380   0.1664    +20.6%
+#
+# Note the plan's stroke length saturates at 15.31 mm from 5.0 up, but the
+# COMMANDED acceleration keeps climbing anyway, because the planner spends
+# whatever ceiling it is given on its peak/mean speed ratio. So a higher
+# ceiling is never free, even once length has stopped growing.
+#
+# Baseline takes, --compile --render baseline, period_corr by note length:
+#
+#   setting      fast <150ms   mid    long    all    listener
+#   6.0 t1.00    0.804         0.910  0.973   0.844
+#   4.0 t1.00    0.871         0.904  0.975   0.890
+#   5.5 t1.00    0.900         0.926  0.988   0.916  preferred
+#   5.5 t1.15    0.902         0.941  0.982   0.922  "crunchy/screechy"
+#
+# Damage from acceleration is confined to notes under 150 ms; mid and long
+# notes are unchanged across the whole range (0.90-0.94 and 0.97-0.99). So
+# the ceiling is a fast-note question only.
+#
+# TWO WARNINGS about that table, both real:
+#
+#   1. The four takes are listed in RECORDING ORDER and their scores rise
+#      monotonically with clock time (12:09, 12:21, 12:38, 12:39). 5.5 also
+#      beat 4.0 on fast notes, which the acceleration story does not predict.
+#      Some or all of the spread may be the instrument warming up rather than
+#      the setting. Nobody has run the control -- re-measuring 6.0 at the END
+#      of a session -- and until someone does, treat the ORDERING here as
+#      unconfirmed and the 5.5 choice as resting on the listener plus the
+#      speed-authority argument above, not on these numbers.
+#   2. period_corr scored the t1.15 take marginally BETTER (0.902 vs 0.900 on
+#      fast notes) than the take the listener called crunchy. That is the
+#      fourth metric/ear disagreement on this piece. Trust the ear.
+#
+# --tempo-scale does NOT substitute for acceleration: at 5.5, going from
+# tempo 1.00 to 1.45 moves the baseline's commanded accel only 4.676 -> 4.478,
+# because the target SPEED comes from the written dynamic rather than from
+# duration, so a longer note is just a longer stroke at the same speed. What
+# tempo does buy is deliverable upward range (v(a=+1) 0.1525 -> 0.1721 at
+# 1.15) and a smaller reversal fraction per note. It was tried at 1.15 and
+# heard worse; left at 1.0.
+#
+# ── history: raised 4.0 -> 6.0 on 2026-08-17, reverted 8/18 ──────────────
+# 4.0 was a conservative choice, not a hardware limit (a UR5e does far more
+# at the tool), and it was costing two things:
 #
 #   1. It ate 46% of the residual policy's UPWARD speed authority. The policy
 #      asks for length * (1 + a*0.35); solve_stroke then cuts the length back
@@ -481,11 +544,9 @@ ACCEL_MAX = 6.0     # m/s^2
 # gripping. (The CNN judge called that take BETTER, 0.479 vs 0.473, which is
 # the third time it disagreed with the physical measures and the ear.)
 #
-# 6.0 is the smallest value that still buys the FULL speed range -- the
-# residual's +-35% saturates exactly here -- so it takes the whole policy
-# benefit while staying as far from the bounce threshold as that allows.
-# Turnaround is ~34 ms rather than 4.0's ~51 ms. Do not raise without
-# re-measuring period_corr on the fast passage.
+# 6.0 was then chosen as the smallest value that still buys the FULL speed
+# range -- the residual's +-35% saturates exactly there. The 8/18 measurement
+# above is what overturned it: the bounce reaches 6.0 as well.
 #
 # NOTE: the reward's price for harsh attacks used to be normalised by this
 # same constant, so raising it made harsh attacks cheaper. That is now

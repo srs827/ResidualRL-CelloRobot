@@ -34,6 +34,36 @@ CAVEATS, all real:
     The RL plays partial strokes anywhere in u = 0.2..0.8, where leverage
     genuinely differs, and that error is NOT in the 1.14 dB residual.
   - The dataset is sustained full-bow strokes; RL strokes run 7..233 mm.
+  - NOTE DURATION is not in the model and matters more than anything else
+    left out of it. Measured 2026-08-18 on one instrumented yunpiece episode
+    (n=182, random actions, so speed and depth are decorrelated from the
+    score): regressing (measured - model) on log duration, bow speed and
+    depth gives +6.99 dB per DECADE of note length, R^2 0.50. A 0.111 s note
+    therefore reads ~6.7 dB quieter than a 1.0 s note at the same speed and
+    depth. By band:
+
+        0.00-0.15 s  n=128   -1.66 dB      0.30-0.60 s  n= 15   +2.43 dB
+        0.15-0.30 s  n= 29   +0.77 dB      0.60 s +     n= 10   +2.12 dB
+
+    Direction independently confirmed by tempo, which scales every duration:
+    across the 2026-08-18 blinded sweep, tempo 1.2 takes sit +0.57 dB above
+    tempo 1.0 where the coefficient predicts +0.55. The 1.1 takes do NOT fit
+    (+0.01 observed vs +0.29 predicted, against a within-group sd of 0.06),
+    so the effect is real and large across a wide duration range while the
+    LOG-LINEAR FORM is not validated over narrow ranges. Do not fit a
+    correction from this coefficient without more points.
+
+    Why it matters: the zones are 2.5 dB wide, 70% of yunpiece is under
+    0.15 s, and those notes are graded 1.66 dB too quiet on average. That is
+    a MEASUREMENT bias, not physics, so no residual the policy can play will
+    remove it -- the same unsatisfiable-penalty shape that duration-aware
+    dynamic targets and the onset fix were both written to remove.
+
+    It also explains why a single scalar gain offset cannot serve two pieces:
+    string_crossings.mid is 14 notes of 0.999 s and calibrated to +8.04 dB,
+    yunpiece.mxl has median 0.111 s and calibrates to +5.06 dB. That 2.98 dB
+    gap is the same effect, and calibrate_gain's own --write guard already
+    names it ("model nonlinearity, or duration-dependent bias").
   - dBFS is absolute and therefore tied to THIS microphone and gain setting.
     Change the interface, the gain, or the mic position and the zones must be
     re-fitted or they will be silently wrong.
@@ -89,6 +119,11 @@ class LoudnessModel:
         # Re-measure with calibrate_gain_offset() whenever the audio path
         # changes. It is a property of the microphone, not of the playing.
         self.gain_offset_db = float(data.get("gain_offset_db", 0.0))
+        # Provenance of the number above, so a run can print WHEN and on
+        # what it was measured. A gain offset carried over from another
+        # session or another piece is the failure this whole block
+        # describes, and it is invisible unless something says so.
+        self.gain_offset_note = str(data.get("gain_offset_note", ""))
 
     # ── forward / inverse ────────────────────────────────────────
 
