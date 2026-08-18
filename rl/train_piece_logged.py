@@ -420,14 +420,35 @@ def _patch_hardware_executor():
             # its motion leads the onset while training's follows it), found
             # neutral, and reverted.
             #
-            # What it is FOR, concretely: rl/reward_noise.py 2026-08-18 showed
-            # repeat sd growing 11x through one episode (0.0115 -> 0.1278 on
-            # total reward at strokes 36/90/145) while the action signal
-            # stayed flat -- and the same takes showed the window drifting
-            # -0.50 ms per stroke, ~72 ms accumulated by stroke 145 against a
-            # 111 ms note. This log is what lets that hypothesis be tested
-            # offline, and the test is sharp: does repeat sd stop growing with
-            # stroke index once the window is anchored to motion?
+            # What it is FOR: rl/reward_noise.py 2026-08-18 showed repeat sd
+            # growing 11x through one episode (0.0115 -> 0.1278 on total
+            # reward at strokes 36/90/145) while the action signal stayed
+            # flat. The first hypothesis was that the analysis window drifts
+            # off the note. This log DISPROVED that, which is what it is for.
+            #
+            # Measured on the first instrumented episode, matching each stroke
+            # to the nearest bow DIRECTION REVERSAL (the exact method -- see
+            # below): reversal minus commanded onset is a median -0.9 ms with
+            # a drift of -0.02 ms/stroke and corr(offset, stroke index)
+            # -0.062. The window tracks the real strokes to about a
+            # millisecond and does not drift. Two earlier readings that said
+            # otherwise (a "median 40 ms early", a "-0.50 ms/stroke drift")
+            # were both artifacts of AUDIO-ENERGY onset detection, which
+            # writeup-aug17 already records inventing 80-107 false onsets per
+            # take. Do not re-derive them.
+            #
+            # Note the detector that matters. First-threshold-crossing of
+            # |bow_speed| does NOT work here: through a continuous passage the
+            # bow never stops between notes, so it latches onto the previous
+            # stroke and reports a spurious ~-94 ms. bow_speed is SIGNED, so
+            # use sign changes -- one reversal per bow stroke, exact.
+            #
+            # So the cause of the repeat-sd growth is still unknown. Note it
+            # cannot be diagnosed from a single episode at all: reward_noise
+            # measures spread across REPLAYS of one stroke, while an episode
+            # gives within-episode spread across different strokes. Within one
+            # episode the loudness residual does not grow with stroke index
+            # (corr 0.008), so whatever it is, it is a between-replay effect.
             log = getattr(getattr(self, "logger", None), "log", None)
             if log:
                 try:
