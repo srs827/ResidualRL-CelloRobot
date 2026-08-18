@@ -70,14 +70,38 @@ PIECE = ("SoundClassifier/Data_Collection/public_annotation_packages_a_final/"
 # (accel_max, tempo_scale). The union of the two axes above; (5.5, 1.0) is the
 # shared corner and therefore gets 2x the replication for free, which is what
 # you want on the point both axes are measured against.
-CONDITIONS = [(5.0, 1.00), (5.5, 1.00), (6.0, 1.00), (5.5, 1.10), (5.5, 1.20)]
-REFERENCE = (4.0, 1.00)
+# A condition is (accel_max, tempo_scale, speed_residual). speed_residual None
+# means the planner's nominal (zero residual); a number in [-1, 1] is played as
+# a constant --fixed-action on the speed half of the envelope.
+CONDITIONS = [(5.0, 1.00, None), (5.5, 1.00, None), (6.0, 1.00, None),
+              (5.5, 1.10, None), (5.5, 1.20, None)]
+REFERENCE = (4.0, 1.00, None)
+
+# The SPEED axis. Measured 2026-08-18: the accel/length sweep above planned an
+# identical 0.1380 m/s in every one of its five conditions, and a listener
+# ranking of 15 blinded takes had NO relationship to condition (permutation
+# p = 0.54) even though period_corr separated them at SNR 7.45. So acceleration
+# (4.32-5.03) and length (15.31-17.91 mm) are both inaudible here, and the
+# audible 4.0-vs-6.0 difference earlier that day -- which moved length, speed
+# AND acceleration together -- most likely came from the one variable that
+# sweep held fixed. This axis moves ONLY speed, via the same residual the
+# policy itself controls, so a listener ranking here is directly the evidence
+# the reward has to reproduce.
+# +1.0 is omitted: at ACCEL_MAX 5.5 the upward side saturates at +0.5 (both
+# give 16.92 mm / 0.1525 m/s), so it would spend robot time on a duplicate.
+# -1.0 lands on 9.95 mm / 0.0897 m/s, which is exactly the plan the 8/17 13:42
+# take played -- the one a listener called "decent" the next day. So this axis
+# brackets that sound, and it puts writeup-aug17's Part 3 result (a listener
+# ranked +35% speed FIRST of five takes and -35% LAST) directly under test,
+# blinded and replicated this time rather than one take per condition.
+CONDITIONS_SPEED = [(5.5, 1.00, r) for r in (-1.0, -0.5, 0.0, 0.5)]
 
 F0_A = 220.5
 BANDS = [(0.0, 0.15, "fast"), (0.15, 0.30, "mid"), (0.30, 9.9, "long")]
 
 
-def plan_signature(accel_max: float, tempo: float) -> dict:
+def plan_signature(accel_max: float, tempo: float,
+                   speed_res: float | None = None) -> dict:
     """Commanded motion for a condition, in-process (no robot, no audio)."""
     env = dict(os.environ, CELLO_ACCEL_MAX=str(accel_max),
                PYTHONDONTWRITEBYTECODE="1")
@@ -87,7 +111,8 @@ def plan_signature(accel_max: float, tempo: float) -> dict:
         f"n,m,st=load_piece({PIECE!r},calibrated_dynamics=False,tempo_scale={tempo});"
         "L=[abs(s.u_end-s.u_start)*PMP.BOW_LENGTH for s in st];"
         "T=[s.duration for s in st];"
-        "so=[PMP.solve_stroke(l,t) for l,t in zip(L,T)];"
+        f"m={1.0 if speed_res is None else 1.0 + speed_res * 0.35};"
+        "so=[PMP.solve_stroke(l*m,t) for l,t in zip(L,T)];"
         "print(json.dumps({'accel_max':PMP.ACCEL_MAX,"
         "'len_mm':float(np.median([s.length for s in so])*1000),"
         "'speed':float(np.median([s.mean_speed for s in so])),"
@@ -99,13 +124,18 @@ def plan_signature(accel_max: float, tempo: float) -> dict:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def record_take(accel_max: float, tempo: float, real: bool) -> Path | None:
+def record_take(accel_max: float, tempo: float, speed_res: float | None,
+                real: bool) -> Path | None:
     """One take. Returns the perform dir it created, or None in mock."""
     before = set(glob.glob(str(REPO_ROOT / "rl/checkpoints_piece/perform_*")))
     cmd = [sys.executable, "-u", "rl/perform.py",
            "--baseline", "--compile", "--render", "baseline",
            "--tempo-scale", str(tempo), PIECE,
            "--real" if real else "--mock"]
+    if speed_res is not None:
+        # speed half of the 6-dim envelope only; depth left at nominal so the
+        # axis stays single-variable.
+        cmd += ["--fixed-action", ",".join([str(speed_res)] * 3 + ["0"] * 3)]
     env = dict(os.environ, CELLO_ACCEL_MAX=str(accel_max))
     r = subprocess.run(cmd, cwd=REPO_ROOT, env=env, input="\n",
                        capture_output=True, text=True)
@@ -163,14 +193,15 @@ def score_take(perform_dir: Path) -> dict:
 
 
 def cmd_record(args) -> None:
-    conds = list(CONDITIONS) + ([REFERENCE] if args.with_4 else [])
+    conds = (list(CONDITIONS_SPEED) if args.axis == "speed"
+             else list(CONDITIONS) + ([REFERENCE] if args.with_4 else []))
     print("verifying the env override reaches the planner for each condition")
     sigs = {}
     for c in conds:
         s = plan_signature(*c)
         sigs[str(c)] = s
         ok = abs(s["accel_max"] - c[0]) < 1e-6
-        print(f"  accel {c[0]:<4} tempo {c[1]:<5} -> planner saw "
+        print(f"  accel {c[0]:<4} tempo {c[1]:<5} spd_res {str(c[2]):<5} -> saw "
               f"{s['accel_max']:<4} len {s['len_mm']:6.2f}mm "
               f"speed {s['speed']:.4f} accel {s['accel']:5.3f}  "
               f"{'ok' if ok else 'MISMATCH'}")
@@ -190,11 +221,12 @@ def cmd_record(args) -> None:
     print("blinded ids only; run --decode when you have ranked them\n")
 
     key, results = {}, []
-    for i, (am, ts) in enumerate(order, 1):
+    for i, (am, ts, sr_) in enumerate(order, 1):
         tid = f"take_{i:02d}"
         print(f"[{i}/{len(order)}] {tid}", flush=True)
-        d = record_take(am, ts, args.real)
-        key[tid] = {"accel_max": am, "tempo_scale": ts, "order": i,
+        d = record_take(am, ts, sr_, args.real)
+        key[tid] = {"accel_max": am, "tempo_scale": ts, "speed_residual": sr_,
+                    "order": i,
                     "perform_dir": str(d) if d else None}
         row = {"take": tid, "order": i}
         if d is not None and args.real:
@@ -222,7 +254,8 @@ def cmd_decode(path: Path) -> None:
         k = key.get(r["take"])
         if not k or r.get("pc_fast") is None:
             continue
-        by.setdefault((k["accel_max"], k["tempo_scale"]), []).append(r)
+        by.setdefault((k["accel_max"], k["tempo_scale"],
+                       k.get("speed_residual")), []).append(r)
     if not by:
         sys.exit("no scored takes — was this recorded with --real?")
 
@@ -232,7 +265,7 @@ def cmd_decode(path: Path) -> None:
         f = np.array([r["pc_fast"] for r in rs])
         a = np.array([r["pc_all"] for r in rs])
         rms = np.mean([r["rms_dbfs"] for r in rs])
-        print(f"  accel {c[0]:<4} t{c[1]:<4}{len(rs):4d}"
+        print(f"  a{c[0]:<4} t{c[1]:<4} s{str(c[2]):<5}{len(rs):4d}"
               f"{f.mean():10.3f} ±{f.std(ddof=1) if len(f)>1 else 0:.3f}"
               f"{a.mean():10.3f} ±{a.std(ddof=1) if len(a)>1 else 0:.3f}"
               f"{rms:8.2f}")
@@ -275,6 +308,10 @@ def main() -> None:
     ap.set_defaults(real=False)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--axis", choices=("accel", "speed"), default="accel",
+                    help="'accel' sweeps the ceiling and tempo (planned speed "
+                         "is identical across all of it); 'speed' sweeps the "
+                         "policy's own speed residual at fixed ceiling/tempo")
     ap.add_argument("--with-4", action="store_true",
                     help="add the confounded ACCEL_MAX 4.0 reference point")
     ap.add_argument("--decode", metavar="SWEEP_DIR", default=None)
