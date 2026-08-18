@@ -243,6 +243,7 @@ class LoggedEpisodeQualityLogger(tp.EpisodeQualityLogger):
             "reward_overrides": REWARD_OVERRIDES,
         }) + "\n")
         self._episode = 1 + EPISODE_OFFSET
+        self.episode_offset = EPISODE_OFFSET   # console print matches the log
         self._stroke_seq = 0
         self._stroke_in_ep = 0
 

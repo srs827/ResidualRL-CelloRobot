@@ -89,6 +89,11 @@ class LoudnessModel:
         # Re-measure with calibrate_gain_offset() whenever the audio path
         # changes. It is a property of the microphone, not of the playing.
         self.gain_offset_db = float(data.get("gain_offset_db", 0.0))
+        # Provenance of the number above, so a run can print WHEN and on
+        # what it was measured. A gain offset carried over from another
+        # session or another piece is the failure this whole block
+        # describes, and it is invisible unless something says so.
+        self.gain_offset_note = str(data.get("gain_offset_note", ""))
 
     # ── forward / inverse ────────────────────────────────────────
 

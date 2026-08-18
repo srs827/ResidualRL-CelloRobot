@@ -91,6 +91,13 @@ class EpisodeQualityLogger:
         self.history: list[float] = []
         self.dynamics: list[float] = []
         self._warned_flat = False
+        # Episodes already completed before this process started. Stays 0 for
+        # a fresh run; a resuming wrapper sets it so the printed episode
+        # number matches the one written to the stroke log. Without it a
+        # correct --resume-run prints "[episode 1]" while logging episode
+        # N+1, which reads as a stale checkpoint and invites the restart that
+        # flag exists to prevent.
+        self.episode_offset = 0
 
     def __call__(self, locals_, globals_):   # SB3 callback signature
         infos = locals_.get("infos", [])
@@ -98,7 +105,7 @@ class EpisodeQualityLogger:
             if "mean_quality" not in info:
                 continue
             self.history.append(info["mean_quality"])
-            n = len(self.history)
+            n = len(self.history) + self.episode_offset
             recent = float(np.mean(self.history[-10:]))
             extra = ""
             if "mean_dynamic" in info:

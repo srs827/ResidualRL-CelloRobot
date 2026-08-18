@@ -938,6 +938,26 @@ class PieceResidualEnv(gym.Env):
         if not self.plan:
             raise ValueError(f"{piece_path}: the planner produced no strokes")
 
+        # State the two settings that silently decide how dynamics are
+        # graded. Both have gone wrong unnoticed: three runs (2026-08-16/17)
+        # trained with calibrated dynamics on by default with nothing on the
+        # console saying so, and a stale gain offset zeroes the dynamics
+        # reward with no error at all (writeup-aug12 s1). Note that
+        # select_best.py and perform.py default calibrated_dynamics OFF, so a
+        # mismatch here means the checkpoint gets chosen and performed in a
+        # different regime than the one it trained in.
+        if self.loudness is not None:
+            aim = "CALIBRATED" if calibrated_dynamics else "planner open-loop"
+            reaimed = (self.meta.get("dynamics_calibration") or {}).get(
+                "notes_reaimed")
+            if reaimed:
+                aim += f" ({reaimed} notes re-aimed)"
+            measured = (getattr(self.loudness, "gain_offset_note", "") or
+                        "provenance unrecorded").split(" via ")[0]
+            print(f"  aiming: {aim}")
+            print(f"  gain_offset: {self.loudness.gain_offset_db:+.2f} dB "
+                  f"({measured})")
+
         # Depth stays on the ORIGINAL written dynamics even when speed has
         # been re-aimed, so calibration cannot drag quiet notes into the
         # slow-and-light corner where the string stops speaking.
