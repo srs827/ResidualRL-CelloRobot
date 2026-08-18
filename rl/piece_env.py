@@ -312,6 +312,42 @@ W_SPEAK = 0.35   # per-SEGMENT starving: the policy owns this, so price it.
 # ep0100 policy took a segment-starving envelope on every long note and still
 # came out ahead. Safe to raise: exactly 0 for any stroke whose segments all
 # clear the floor, so it cannot penalise a stroke that is working.
+# ── measured-optimal bow speed, as a PHYSICAL prior ───────────────
+# Both tone terms are validated on SUSTAINED strokes and invert on this
+# repertoire's short notes. Measured 2026-08-18 on dataset_a_final's 500
+# human-annotated recordings (standard config = this rig):
+#
+#     speed   human tone_quality   CNN
+#     0.09         2.405          0.323
+#     0.12         2.795          0.411
+#     0.15         2.810          0.482
+#     0.20         2.795          0.561
+#     0.25         2.645          0.564
+#
+# corr(CNN, human tone_quality) = +0.879 there -- the judge is EXCELLENT
+# where it was trained. But on 0.111 s notes the same judge scored a take
+# bowing 0.0917 m/s at 0.674 against 0.392 for the 0.1380 baseline, i.e.
+# it paid the policy to bow onto the speaking floor. period_corr inverts in
+# the same regime (+0.779 vs human labels on sustained, -0.600 vs the ear on
+# the fast passage). With W_QUALITY 0.50 + W_DEFECT 0.25, three quarters of
+# the reward is out of distribution on 86% of yunpiece, and no reweighting
+# between two terms that are both wrong there can fix it.
+#
+# So substitute a physical prior exactly where the judge cannot see. Humans
+# rate 0.12-0.20 m/s as a plateau (2.795/2.810/2.795) and drop off outside
+# it, so this is a deadband, not a point target -- the same shape as the
+# loudness zones and for the same reason: rewarding sub-band precision would
+# be rewarding noise.
+SPEED_SWEET_LO, SPEED_SWEET_HI = 0.12, 0.20
+SPEED_SWEET_FALLOFF = 0.04       # m/s to fall from 1.0 to 0 outside the band
+
+# Weight, calibrated against the exploit it exists to close. The CNN paid
+# +0.28 for bowing to the floor, worth +0.14 of reward at W_QUALITY 0.50.
+# At 0.0917 m/s this term reads 1 - (0.12-0.0917)/0.04 = 0.29, so leaving the
+# band costs 0.71*W. W = 0.20 makes that 0.14 -- enough to cancel the exploit
+# on the shortest notes, without outweighing the judge where the judge works.
+W_SPEED_TARGET = 0.20
+
 W_SPEAK_MEAN = 0.0
 # DIAGNOSTIC ONLY -- logged, never priced. Measured
 # 2026-08-17: the policy cannot change a stroke's MEAN speed at all. The
@@ -1156,11 +1192,27 @@ class PieceResidualEnv(gym.Env):
                              dtype=float)
         use_envelope = s.duration >= ENVELOPE_MIN_DURATION
 
-        # A note too short to segment is its own attack, so segment 0's
-        # residual applies to the whole thing. That keeps dim 0 meaning "the
-        # attack" whatever the note length.
-        speed_scale = 1.0 + (float(spd_res.mean()) if use_envelope
-                             else float(spd_res[0])) * SPEED_RESIDUAL_FRAC
+        # Short notes use the MEAN of the segment residuals, same as long
+        # ones. They used to take segment 0 alone, on the reasoning that "a
+        # note too short to segment is its own attack, so dim 0 keeps meaning
+        # the attack whatever the note length". That coupling was measured
+        # 2026-08-18 to be the single biggest defect in the trained policy.
+        #
+        # ENVELOPE_MIN_DURATION is 0.40 s and 86% of yunpiece is under 0.15 s,
+        # so dim 0 was doing two incompatible jobs: the gentle START of a
+        # swell on the 14% that get an envelope, and the WHOLE SPEED of every
+        # other note. The policy learned seg0 = -0.95 (54% of strokes pinned
+        # at the bound), which is musically sensible as an attack -- it built
+        # a real messa di voce, slow/light -> faster/heavier -> light -- and
+        # catastrophic as a whole-note speed: 1 - 0.95*0.35 = 0.67, taking
+        # 0.1380 m/s down to 0.092, onto the 0.09 speaking floor, on 86% of
+        # the piece. Measured on the take: median 0.0917 m/s.
+        #
+        # With the mean, that same policy's speed half (-0.227) gives 8%
+        # slower instead of 33%, and the swell on long notes is untouched.
+        # Dim 0 still shapes the attack where an envelope exists; it just no
+        # longer drags every short note down with it.
+        speed_scale = 1.0 + float(spd_res.mean()) * SPEED_RESIDUAL_FRAC
 
         # Base depth: the planner's, unless dynamics were re-aimed -- then use
         # the depth the ORIGINAL written dynamic implies, so speed carries the
@@ -1168,7 +1220,12 @@ class PieceResidualEnv(gym.Env):
         base_depth = s.depth
         if self._depth_volumes and s.note_index < len(self._depth_volumes):
             base_depth = PMP.volume_to_depth(self._depth_volumes[s.note_index])
-        depth_res0 = float(dep_res.mean()) if use_envelope else float(dep_res[0])
+        # Same decoupling as speed above: seg0 alone was driving short notes
+        # to a median -0.715 residual, i.e. -1.19 mm against the planner's
+        # -0.45, closing on the -1.5 mm limit. Slow AND light is the corner
+        # expand_dynamic_range() documents as "thin and unsteady rather than
+        # soft", and the policy sat in it.
+        depth_res0 = float(dep_res.mean())
         depth = float(np.clip(base_depth + depth_res0 * DEPTH_RESIDUAL_M,
                               DEPTH_LO, DEPTH_HI))
 
@@ -1460,7 +1517,22 @@ class PieceResidualEnv(gym.Env):
         r_speak_mean = -float(np.clip(
             (PMP.SPEED_MIN - exec_stroke.mean_speed) / PMP.SPEED_MIN, 0.0, 1.0))
 
+        # Physical speed prior, weighted by how little the audio judge can be
+        # trusted on this note. `fill` is the fraction of the classifier's
+        # window the note actually occupies, so (1 - fill) is exactly "how far
+        # out of distribution the judge is here": full weight on the shortest
+        # notes, zero on a note long enough that the CNN was validated on it
+        # and correctly prefers a faster bow on its own.
+        v = float(result.measured_mean_speed)
+        if SPEED_SWEET_LO <= v <= SPEED_SWEET_HI:
+            r_speed_target = 1.0
+        else:
+            miss = (SPEED_SWEET_LO - v) if v < SPEED_SWEET_LO else (v - SPEED_SWEET_HI)
+            r_speed_target = float(max(0.0, 1.0 - miss / SPEED_SWEET_FALLOFF))
+        w_speed_target = W_SPEED_TARGET * (1.0 - fill)
+
         total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
+                 + w_speed_target * r_speed_target
                  + W_BOW * r_bow + W_SMOOTH * r_smooth
                  - W_DEFECT * r_defect + W_ONSET_ACCEL * r_onset
                  + W_ENVELOPE * r_envelope + W_SPEAK * r_speak
@@ -1472,6 +1544,8 @@ class PieceResidualEnv(gym.Env):
             "quality": quality, "quality_eff": quality_eff,
             "tone": float(tone), "window_fill": fill,
             "r_dynamic": r_dynamic, "r_bow": r_bow,
+            "r_speed_target": float(r_speed_target),
+            "w_speed_target": float(w_speed_target),
             "r_smooth": r_smooth, "err_db": float(err_db),
             "zone_cap_db": float(zone_cap_db),
             "r_defect": float(r_defect), "r_onset": float(r_onset),
