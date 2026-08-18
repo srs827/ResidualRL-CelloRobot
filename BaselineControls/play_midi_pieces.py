@@ -179,6 +179,7 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import sys
 import time
 import zipfile
@@ -457,7 +458,15 @@ DEPTH_WEIGHT = 1.0
 # covering L metres in T seconds needs at least 4L/T^2, so a 0.08 s note needs
 # several m/s^2 no matter how short the stroke. ACCEL_MAX is the ceiling the
 # planner is allowed to raise to, and stroke lengths are cut before it.
-ACCEL_MAX = 5.5     # m/s^2
+ACCEL_MAX = float(os.environ.get("CELLO_ACCEL_MAX", 5.5))   # m/s^2
+# CELLO_ACCEL_MAX overrides the default for a single process. This exists so a
+# parameter sweep can vary the ceiling WITHOUT rewriting this file between
+# takes: every consumer picks the value up as a def-time default
+# (solve_stroke, BowPlanner.__init__, piece_env.ACCEL_MAX_FOR_DYNAMICS), so
+# editing the source mid-sweep is the only alternative -- and that silently
+# failed on 2026-08-18, because a same-length edit inside one second does not
+# invalidate __pycache__, so several sweep points measured a stale value.
+# Read once at import; unset means the committed default above.
 # Set to 5.5 on 2026-08-18 after a four-point hardware sweep. 5.5 is the
 # SMALLEST ceiling that gives the residual any upward speed authority at all:
 # below 5.0 the plan and the residual are capped at the same place, so
