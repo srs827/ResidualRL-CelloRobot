@@ -236,13 +236,53 @@ DEFECT_FEATURES = [
     # chasing the last percent. `bad` is 0.60, just under the .mid take's
     # 0.622 overall. The discrimination is concentrated in the 100-200 ms
     # band (0.787 vs 0.896), which is exactly the fast-passage regime.
-    ("period_corr",        +1,  0.95, 0.60, 1.0),  # not speaking / rubbing
+    # Bound moved 0.95 -> 0.88 on 2026-08-18. period_corr is REGIME-DEPENDENT
+    # and was being used in the regime where it inverts:
+    #
+    #   sustained 3.2 s strokes (dataset_a_final, standard config, n=100 with
+    #     human labels):  corr(period_corr, human tone_quality) = +0.779,
+    #     corr(period_corr, bow speed) = +0.748.  Excellent.
+    #   fast passage (yunpiece, 0.111 s notes, 2026-08-18 blinded takes):
+    #     Spearman vs the listener ranking = -0.600; corr with speed -0.388.
+    #     Backwards.
+    #
+    # Mechanism: at 0.111 s with a bow reversal at each end, more speed puts
+    # more of the note into the reversal transient (2v/a) and less into steady
+    # state. period_corr measures steady-state cycle-to-cycle stability, so it
+    # reads "fraction of the note that is steady" -- which falls with speed,
+    # while the listener hears the fuller tone and prefers it. The .mid/.mxl
+    # case this feature was validated on (0.622 vs 0.911) had the .mid take
+    # bowing 0.061 m/s, BELOW the 0.09 speaking floor: a floor effect, not a
+    # quality gradient, and it generalised the wrong way.
+    #
+    # 0.88 saturates the whole fast-passage speaking range (0.87-0.94 measured
+    # across 21 takes) so the term contributes no gradient there, while 0.731
+    # -- what the dataset's worst-rated speed (0.09 m/s, human tone 2.41)
+    # actually reads -- still scores 0.47, and the 0.622 case still scores
+    # 0.08. It survives as a FLOOR GUARD against notes that are not speaking,
+    # which is the one job it is demonstrably good at.
+    ("period_corr",        +1,  0.88, 0.60, 1.0),  # not speaking / rubbing
 ]
-W_DEFECT = 0.35   # scaled against the tone term; applied as a penalty
-# Raised from 0.15 on 2026-08-17, the other half of the same rebalance. These
-# features are physics, they work at any note length, and on the .mid/.mxl
-# pair they were the terms that got the ordering right. With the CNN now
-# discounted on short notes, something has to carry the tone signal there.
+W_DEFECT = 0.25   # scaled against the tone term; applied as a penalty
+# 0.15 -> 0.35 on 2026-08-17, -> 0.25 on 2026-08-18. The 8/17 raise was the
+# other half of the WINDOW_FILL_FLOOR cut: with the CNN discounted on short
+# notes something had to carry tone signal there, and these features are
+# physics that works at any note length.
+#
+# What 8/18 changed: the pair that raise was argued from (.mid vs .mxl) is a
+# floor effect -- the .mid take bowed below the speaking threshold -- and on
+# the axis that matters most the basket contained an INVERTED term. Real
+# problem, overshot compensation.
+#
+# NOT reverted to 0.15, because the features do validate where they were
+# fitted: on dataset_a_final standard config against human tone_quality,
+# hnr_db_mean +0.774 and period_corr +0.779 (n=100). The basket is
+# regime-dependent, not wrong. 0.25 keeps it meaningful while easing the
+# amplification, now that period_corr saturates across the fast-passage range
+# instead of gradient-ing the wrong way through it.
+#
+# attack_overshoot and f0_stability_cents remain UNVALIDATED against human
+# ratings. Worth doing -- the labels are already collected.
 
 # ── Onset acceleration penalty ────────────────────────────────────
 # Nothing in the reward has ever priced the harshness of a bow change. Each
@@ -323,7 +363,31 @@ CLASSIFIER_WINDOW_SEC = 0.5
 # the window shrinks — fewer pitch periods for F0 stability and HNR. Measured
 # on the standard config that costs little: rho 0.824 at 0.10 s against 0.835
 # at 0.50 s. Hence a light floor rather than the heavy shrink this started as.
-WINDOW_FILL_FLOOR = 0.35
+WINDOW_FILL_FLOOR = 0.55
+# 0.85 -> 0.35 on 2026-08-17, -> 0.55 on 2026-08-18. Set BETWEEN two
+# measurements that both stand and point opposite ways, on the same
+# checkpoint (quality_cnn_multilength.pt, unchanged since 08-11):
+#
+#   AGAINST the judge (8/17): on .mid vs .mxl, a pair a listener called "much
+#     much better" apart, it scored 0.474 vs 0.473 and inverted on mid-take
+#     slices. Real blindness. Note though that the .mid take bowed 0.061 m/s,
+#     BELOW the 0.09 speaking floor -- so it was blind to a note barely
+#     speaking, which is a floor case rather than a tone gradient.
+#   FOR the judge (8/18): on 6 blinded takes of the fast passage differing
+#     only in bow speed, it separated them PERFECTLY -- all three faster takes
+#     above all three slower (0.454 vs 0.408 mean) -- and matched the
+#     listener's ranking at Spearman +0.543, while period_corr matched it at
+#     -0.600. On 0.111 s notes, the exact short-note regime this floor was cut
+#     for.
+#
+# So the judge is not uniformly blind on short notes: it misses some things
+# and is the ONLY term that reads bow speed the way a listener does. Speed is
+# the policy's primary lever and the direction all three prior runs got wrong,
+# so discounting the judge to 0.35 was discounting the one term pointing the
+# right way on the thing that matters most. 0.55 restores over half of it
+# without pretending the 8/17 blindness did not happen.
+#
+# Original note follows.
 # Lowered from 0.85 on 2026-08-17. The 0.85 was set from a measurement that
 # sliced SUSTAINED strokes to different lengths and found Spearman rho barely
 # moving (0.824 at 0.10 s vs 0.835 at 0.50 s) -- a fair test of whether the
