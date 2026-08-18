@@ -248,13 +248,36 @@ def _parse_action(spec):
     return v
 
 
-def compile_performance(model, env, baseline, fixed_action=None):
+def compile_performance(model, env, baseline, fixed_action=None,
+                        half=None):
     """Deterministic rollout through the capturing env -> stroke list.
 
     `fixed_action` plays one constant action on every stroke. Used to generate
     deliberately different-sounding takes for ear judgement: the reward has to
     be shown to ORDER takes the way a listener does before another training run
     is worth the hardware time, and one pair is not enough evidence.
+
+    `half` ablates one half of the 6-dim envelope action IN PLAY, with no
+    retraining: "depth" zeroes the three SPEED residuals so the stroke keeps
+    the planner's own bow speed and length while the policy still shapes
+    depth; "speed" does the reverse. The action is [spd x3, depth x3] and the
+    two halves are independent at the executor, so either can be dropped
+    without touching the rest.
+
+    Why it exists: on 2026-08-18 the trained policy was heard as more musical
+    ("more character", interesting dynamics) but tonally worse, with the
+    damage attributed by ear to within-note swells. Speed and depth shaping
+    are the two candidates and they cost very different things -- the speed
+    weights are normalised, so they redistribute bow WITHIN the note and are
+    what produce a lurch, while depth is a gentle timbral trim (~0.42 dB/mm
+    across the whole envelope). This separates them for the price of one take
+    instead of a retrain.
+
+    NOTE what this does NOT remove: a note whose segments differ in DEPTH is
+    still dispatched as moveL(path) rather than a single pose (see
+    render_baseline's collapse check, which tests speed AND depth), so
+    depth-only shaping keeps the path-dispatch timing cost. Use
+    --flatten-envelope to drop that too.
     """
     obs, _ = env.reset(seed=0)
     done = False
@@ -265,6 +288,13 @@ def compile_performance(model, env, baseline, fixed_action=None):
             action = np.zeros(env.action_space.shape, dtype=np.float32)
         else:
             action, _ = model.predict(obs, deterministic=True)
+        if half:
+            from rl.piece_env import N_ENVELOPE_SEGMENTS as _NS
+            action = np.asarray(action, dtype=np.float32).copy()
+            if half == "depth":
+                action[:_NS] = 0.0          # planner's speed, learned depth
+            else:
+                action[_NS:2 * _NS] = 0.0   # learned speed, planner's depth
         obs, r, done, _, info = env.step(action)
     return env.executor.strokes
 
@@ -794,6 +824,12 @@ def main():
                     help="six comma-separated values in [-1,1] "
                          "(spd x3, depth x3) played on EVERY stroke, for "
                          "generating deliberately different takes to judge")
+    ap.add_argument("--only", choices=("depth", "speed"), default=None,
+                    help="play only half of the policy's envelope action: "
+                         "'depth' keeps the learned depth shaping and uses the "
+                         "PLANNER's speed; 'speed' the reverse. Ablation with "
+                         "no retraining (the halves are independent at the "
+                         "executor). Ignored with --baseline.")
     ap.add_argument("--flatten-envelope", action="store_true",
                     help="average each note's envelope to one segment so it "
                          "dispatches as a single moveL. Costs the intra-note "
@@ -839,7 +875,8 @@ def main():
                          tempo_scale=args.tempo_scale)
         strokes = compile_performance(model, env, args.baseline,
                                       fixed_action=_parse_action(
-                                          args.fixed_action))
+                                          args.fixed_action),
+                                      half=args.only)
         written_total = max(s.onset + s.duration for s in env.plan)
         env.close()
         out_dir = REPO_ROOT / "rl" / "checkpoints_piece" / \
