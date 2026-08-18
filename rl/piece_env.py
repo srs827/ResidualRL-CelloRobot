@@ -441,6 +441,15 @@ class ExecStroke:
     depth: float                    # m signed, clamped to safety envelope
     volume_target: float            # 0..1, what the score asked for
     retake_from: float | None = None
+    # Seconds the retake needs (lift -> traverse -> set down). The baseline
+    # player pre-starts the retake at onset - retake_time so the NOTE lands
+    # on time; without this field the adapter defaulted it to 0 and every
+    # retaken note in the --render baseline path started a full retake late
+    # (writeup-aug17 "retakes can't be started early"). Value is the
+    # planner's estimate for its planned from-position; the env may actually
+    # retake from a residual-drifted u, so treat it as a close lower-noise
+    # estimate, not an exact promise.
+    retake_time: float = 0.0
     onset: float = 0.0
     gap_before: float = 0.0         # s of silence before this stroke
     segments: list = field(default_factory=list)   # PMP.Segment list
@@ -1111,6 +1120,7 @@ class PieceResidualEnv(gym.Env):
             depth=depth,
             volume_target=s.volume_target,
             retake_from=retake_from,
+            retake_time=s.retake_time if retake_from is not None else 0.0,
             onset=s.onset,
             gap_before=max(0.0, s.onset - prev_end),
             segments=segments,

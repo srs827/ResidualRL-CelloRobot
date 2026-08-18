@@ -130,6 +130,7 @@ class HardwareExecutor(ExecutorBase):
         self._stream = None
         self._chunks: list[np.ndarray] = []
         self._audio_t0 = None
+        self._recording = False
 
         self.save_dir = save_dir
         if save_dir:
@@ -140,26 +141,33 @@ class HardwareExecutor(ExecutorBase):
     # ── audio ─────────────────────────────────────────────────────
 
     def _audio_callback(self, indata, frames, t, status):
+        if not self._recording:
+            return
         self._chunks.append(indata[:, self.audio_channel - 1].copy()
                             if indata.ndim > 1 else indata.copy())
 
     def _start_audio(self):
+        # One stream for the whole process, gated by _recording. Tearing the
+        # stream down per episode is not safe on macOS: CoreAudio's IO thread
+        # can deliver one more buffer to the just-closed stream's callback,
+        # which lands in freed memory (crashed reproducibly on the 3rd
+        # open/close cycle, 2026-08-18). The flag gives the same
+        # chunks-only-between-start-and-stop semantics without ever closing.
         self._chunks = []
-        self._stream = self._sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=self.audio_channel,
-            device=self.audio_device,
-            dtype="float32",
-            callback=self._audio_callback,
-        )
-        self._stream.start()
+        if self._stream is None:
+            self._stream = self._sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=self.audio_channel,
+                device=self.audio_device,
+                dtype="float32",
+                callback=self._audio_callback,
+            )
+            self._stream.start()
         self._audio_t0 = time.time()
+        self._recording = True
 
     def _stop_audio(self):
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        self._recording = False
 
     @staticmethod
     def _window_bounds(t_start: float, t_end: float) -> tuple[float, float]:
@@ -368,4 +376,7 @@ def _as_plan_stroke(s: ExecStroke):
         dynamic=PMP.velocity_to_dynamic(PMP.volume_to_velocity(s.volume_target)),
         segments=list(s.segments),
         retake_from=s.retake_from,
+        # Without this the player's pre-start lead defaults to 0 and every
+        # retaken note begins a full retake late (writeup-aug17 bug).
+        retake_time=getattr(s, "retake_time", 0.0),
     )

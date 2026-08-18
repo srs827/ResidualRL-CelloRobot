@@ -72,6 +72,62 @@ def _peel(flag: str, has_value: bool = False):
 
 NOTE_DBFS = bool(_peel("--note-dbfs"))
 EPISODE_OFFSET = int(_peel("--episode-offset", has_value=True) or 0)
+
+# ── --resume-run RUN_DIR: compute resume arguments FROM the run ─────────────
+# Hand-typed resume commands silently rewound three runs on 2026-08-16/17:
+# a stale --resume path resets the weights while --episode-offset merely
+# relabels the log, so the run LOOKS continuous while training restarts from
+# an early checkpoint (~45 min of robot time lost, three times). This flag
+# derives both values from the run directory itself and prints them loudly:
+#   * checkpoint = the run's *_latest.zip (falls back to newest ckpt_ep*.zip)
+#   * episode offset = highest episode number actually recorded in the run's
+#     stroke_log.jsonl (already includes any offset the run itself was
+#     started with, so chained resumes stay consistent)
+# Passing --resume or --episode-offset alongside --resume-run is refused.
+RESUME_RUN = _peel("--resume-run", has_value=True)
+if RESUME_RUN:
+    import glob as _glob
+    if EPISODE_OFFSET:
+        sys.exit("--resume-run computes the episode offset itself; drop "
+                 "--episode-offset")
+    if any(a == "--resume" or a.startswith("--resume=") for a in sys.argv):
+        sys.exit("--resume-run computes the checkpoint itself; drop --resume")
+    _run = Path(RESUME_RUN)
+    if not _run.is_dir():
+        sys.exit(f"--resume-run: {_run} is not a directory")
+    _latest = sorted(_run.glob("sac_piece_*_latest.zip"))
+    _ckpt = _latest[-1] if _latest else None
+    if _ckpt is None:
+        _numbered = sorted(_run.glob("ckpt_ep*.zip"))
+        _ckpt = _numbered[-1] if _numbered else None
+    if _ckpt is None:
+        sys.exit(f"--resume-run: no sac_piece_*_latest.zip or ckpt_ep*.zip "
+                 f"in {_run}")
+    _log = _run / "stroke_log.jsonl"
+    if not _log.exists():
+        sys.exit(f"--resume-run: {_log} missing — cannot derive the episode "
+                 "offset; use manual --resume/--episode-offset if you are "
+                 "certain of the numbers")
+    _max_ep = 0
+    for _line in open(_log):
+        try:
+            _rec = json.loads(_line)
+        except json.JSONDecodeError:
+            continue
+        if not _rec.get("header") and "episode" in _rec:
+            _max_ep = max(_max_ep, int(_rec["episode"]))
+    if _max_ep == 0:
+        sys.exit(f"--resume-run: no episode records in {_log}")
+    EPISODE_OFFSET = _max_ep
+    sys.argv += ["--resume", str(_ckpt.with_suffix(""))]
+    print(f"--resume-run {_run.name}:")
+    print(f"  checkpoint      -> {_ckpt.name}"
+          + ("  (+ replay buffer)" if _ckpt.with_name(
+              _ckpt.stem + "_buffer.pkl").exists() else "  (model only)"))
+    print(f"  episode offset  -> {_max_ep} (highest episode in stroke_log)")
+    print(f"  VERIFY the first resumed episode prints as episode "
+          f"{_max_ep + 1} and its scores look continuous with the run — if "
+          f"they reset to early-training levels, the checkpoint was stale.")
 DRIVER = bool(_peel("--driver"))
 GAIN_JITTER_DB = float(_peel("--gain-jitter-db", has_value=True) or 1.5)
 DEPTH_JITTER_MM = float(_peel("--depth-jitter-mm", has_value=True) or 0.0)
