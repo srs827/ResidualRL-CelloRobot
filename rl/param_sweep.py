@@ -135,7 +135,12 @@ def record_take(accel_max: float, tempo: float, speed_res: float | None,
     if speed_res is not None:
         # speed half of the 6-dim envelope only; depth left at nominal so the
         # axis stays single-variable.
-        cmd += ["--fixed-action", ",".join([str(speed_res)] * 3 + ["0"] * 3)]
+        # "=" form, NOT a separate argv entry: a negative residual makes the
+        # value start with "-", and argparse then reads it as a flag and dies
+        # with "expected one argument". That silently killed every negative
+        # speed take of the 2026-08-18 first attempt -- 6 of 12, and precisely
+        # the half the sweep existed to measure.
+        cmd += ["--fixed-action=" + ",".join([str(speed_res)] * 3 + ["0"] * 3)]
     env = dict(os.environ, CELLO_ACCEL_MAX=str(accel_max))
     r = subprocess.run(cmd, cwd=REPO_ROOT, env=env, input="\n",
                        capture_output=True, text=True)
