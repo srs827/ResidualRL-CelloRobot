@@ -457,9 +457,39 @@ DEPTH_WEIGHT = 1.0
 # covering L metres in T seconds needs at least 4L/T^2, so a 0.08 s note needs
 # several m/s^2 no matter how short the stroke. ACCEL_MAX is the ceiling the
 # planner is allowed to raise to, and stroke lengths are cut before it.
-ACCEL_MAX = 6.0     # m/s^2
-# Raised from 4.0 on 2026-08-17. 4.0 was a conservative choice, not a hardware
-# limit (a UR5e does far more at the tool), and it was costing two things:
+ACCEL_MAX = 4.0     # m/s^2
+# Returned to 4.0 on 2026-08-18 after 6.0 was measured and heard worse on the
+# fast passage. The 8/17 history below is kept because its reasoning is sound
+# and its measurements still stand -- only the conclusion changed.
+#
+# 2026-08-18, yunpiece.mxl baseline, --compile --render baseline, same take
+# length and same session (so mic and rosin are held constant):
+#
+#     ACCEL_MAX   period_corr mean   p25     drift    listener
+#     4.0         0.942              0.901   7.8 ms   preferred
+#     6.0         0.918              0.855   6.9 ms
+#
+# The gain is concentrated in the WORST quartile, which is the same
+# bow-bounce signature the 8.0 measurement below describes -- 6.0 has it too,
+# just milder. It is a threshold that is approached gradually, not a cliff at
+# 8.0. Rhythm is unaffected either way (0.9 ms apart, both inside the 7 ms
+# the per-note player is documented to track).
+#
+# What this costs, knowingly: item 1 below is still true -- at 4.0 the
+# residual's upward speed range is clipped, a=+1 delivering a median
+# 0.1109 m/s where it asked for 0.1381. We are choosing baseline tone over
+# policy authority because the recording is the near-term deliverable. If the
+# policy later needs that range back, the fix is more bow TIME (--tempo-scale)
+# rather than more acceleration.
+#
+# CAVEAT on the comparison: today's takes record ~3.9 dB hotter than
+# 2026-08-17's (-18.0 vs -21.9 dBFS rms) and nobody has explained why.
+# period_corr improves with SNR, so the 4.0-vs-6.0 ordering (same session,
+# same level) is trustworthy while any comparison ACROSS days is not.
+#
+# ── history: raised 4.0 -> 6.0 on 2026-08-17, reverted 8/18 ──────────────
+# 4.0 was a conservative choice, not a hardware limit (a UR5e does far more
+# at the tool), and it was costing two things:
 #
 #   1. It ate 46% of the residual policy's UPWARD speed authority. The policy
 #      asks for length * (1 + a*0.35); solve_stroke then cuts the length back
@@ -481,11 +511,9 @@ ACCEL_MAX = 6.0     # m/s^2
 # gripping. (The CNN judge called that take BETTER, 0.479 vs 0.473, which is
 # the third time it disagreed with the physical measures and the ear.)
 #
-# 6.0 is the smallest value that still buys the FULL speed range -- the
-# residual's +-35% saturates exactly here -- so it takes the whole policy
-# benefit while staying as far from the bounce threshold as that allows.
-# Turnaround is ~34 ms rather than 4.0's ~51 ms. Do not raise without
-# re-measuring period_corr on the fast passage.
+# 6.0 was then chosen as the smallest value that still buys the FULL speed
+# range -- the residual's +-35% saturates exactly there. The 8/18 measurement
+# above is what overturned it: the bounce reaches 6.0 as well.
 #
 # NOTE: the reward's price for harsh attacks used to be normalised by this
 # same constant, so raising it made harsh attacks cheaper. That is now
