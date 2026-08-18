@@ -50,3 +50,6 @@ runs/
 /SoundClassifier/Data_Collection/label_studio_tasks*/
 /SoundClassifier/Data_Collection/public_annotation_packages*/
 /SoundClassifier/Data_Collection/mic_test_output/
+
+# Blinded sweep takes: ~4 MB of wav each, regenerable by rl/param_sweep.py
+rl/sweeps/
