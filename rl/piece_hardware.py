@@ -50,8 +50,38 @@ def _shared_audio_callback(indata, frames, t, status):
     ex = _AUDIO["owner"]
     if ex is None or not ex._recording:
         return
-    ex._chunks.append(indata[:, ex.audio_channel - 1].copy()
-                      if indata.ndim > 1 else indata.copy())
+    block = (indata[:, ex.audio_channel - 1].copy()
+             if indata.ndim > 1 else indata.copy())
+    if not ex._chunks:
+        # Re-stamp _audio_t0 from when audio ACTUALLY starts.
+        #
+        # _start_audio sets _audio_t0 = time.time(), which is right only when
+        # it also creates the stream: the first block is then captured from
+        # that instant and delivered one block later. But the stream is shared
+        # and never restarted, so from the SECOND episode onward a block is
+        # already in flight when _chunks is cleared, and its sample 0 was
+        # captured up to a full block BEFORE _audio_t0.
+        #
+        # Measured 2026-08-19 on the Scarlett at 44100: first block arrives
+        # +92.6 ms after _audio_t0 on a fresh stream, +16.3 ms on an
+        # already-running one, block 4096 samples = 92.9 ms. So sample 0 sits
+        # ~76 ms before _audio_t0, and _slice_window's (t - _audio_t0)*sr
+        # lands that far EARLY in the note. On a 0.5 s steady-middle window
+        # that is invisible; on a 0.111 s yunpiece note it is 68% of the note,
+        # so the window mostly captures the previous note's tail.
+        #
+        # _start_audio runs once per episode (reset -> begin_episode), so this
+        # affected 103 of 104 episodes of the 8/19 run while the single-episode
+        # calibration stayed aligned -- calibration and training measuring on
+        # different timebases, which is exactly the cancellation that must not
+        # break.
+        #
+        # len(block)/sr rather than PortAudio's inputBufferAdcTime: the ADC
+        # clock has no fixed relationship to time.time(), while block length
+        # is exact and the delivery instant is what the rest of the class
+        # already works in.
+        ex._audio_t0 = time.time() - len(block) / float(ex.sample_rate)
+    ex._chunks.append(block)
 
 WINDOW_SEC = 0.5          # classifier window (SoundClassifier convention)
 PRE_ROLL_SEC = 0.05       # skip the attack transient when the stroke is long
