@@ -789,7 +789,19 @@ ARTICULATION_DURATION = {
 #
 # Raise it to detach short notes more, lower it toward 0 to take every mark
 # literally (the previous behaviour). Exposed as --articulation-ref.
-ARTICULATION_REF = 0.5
+ARTICULATION_REF = float(os.environ.get("CELLO_ARTICULATION_REF", 0.5))
+# CELLO_ARTICULATION_REF makes the staccato crispness reachable from the RL
+# path, which builds BowPlanner() with defaults and so could not use the
+# --articulation-ref flag. Lower = marks taken more literally = shorter notes
+# with bigger gaps. On yunpiece's 0.125 s staccato eighths (153 of them):
+#
+#     ref 0.5 (default)  note plays 111 ms, gap 14 ms
+#     ref 0.3            note plays 102 ms, gap 23 ms
+#     ref 0.2            note plays  90 ms, gap 35 ms
+#     ref 0.125          note plays  69 ms, gap 56 ms  (fully literal)
+#
+# Asked for on 2026-08-19: a cello professor wanted the staccato "noticeably
+# shorter with gaps". 0.2 roughly triples the silence without going literal.
 
 
 @dataclass

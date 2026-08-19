@@ -372,6 +372,36 @@ W_SPEED_TARGET = 0.20
 #
 # These are a MEASUREMENT-CONDITION correction, not a tuning knob. Leave them
 # at the defaults once the contact drift is fixed at the bow.
+# ── score-level musical edits (cello professor, 2026-08-19) ───────
+# CELLO_DYNAMIC_MAP remaps written dynamics before planning, e.g. "p=f" or
+# "p=f,pp=mp". Volume is what the planner actually reads and `dynamic` is
+# derived from it, so both are rewritten together via DYNAMIC_BY_NAME.
+#
+# Why: yunpiece is written pp 41 / p 128 / f 16, and the 128 p notes ARE the
+# fast section -- every one 0.125 s and staccato. The feedback was "change the
+# dynamic of the fast section to forte" and "needs to be louder in general",
+# and that is exactly the p -> f remap. It also widens the p/f contrast the
+# same feedback asked for, since pp stays where it is.
+DYNAMIC_MAP = {}
+for _pair in os.environ.get("CELLO_DYNAMIC_MAP", "").split(","):
+    if "=" in _pair:
+        _a, _b = _pair.split("=", 1)
+        DYNAMIC_MAP[_a.strip()] = _b.strip()
+
+# Accent shaping, as weights on the 3 envelope segments.
+#
+# The score marks 12 accents and every one is a 0.500 s note, so all of them
+# clear ENVELOPE_MIN_DURATION and get segments -- the rule is reachable on
+# exactly the notes it is written for. The request was to "ramp up during the
+# first segment" and "get louder in the second", so segment 0 takes less bow
+# and segment 1 takes more. Depth leans in on the same beat, which is what
+# makes an accent read as attack rather than just volume.
+#
+# These multiply the PLANNER'S weights, so the baseline gets the articulation
+# too and the policy shapes on top of it rather than having to discover it.
+ACCENT_SPEED_SHAPE = (0.80, 1.30, 0.95)
+ACCENT_DEPTH_MM    = (0.10, 0.35, 0.00)
+
 SPEED_TRIM = float(os.environ.get("CELLO_SPEED_TRIM", 1.0))
 DEPTH_TRIM_M = float(os.environ.get("CELLO_DEPTH_TRIM_MM", 0.0)) / 1000.0
 if SPEED_TRIM != 1.0 or DEPTH_TRIM_M:
@@ -980,6 +1010,19 @@ def load_piece(path: str, tempo_scale: float = 1.0,
     else:
         notes, meta = PMP.parse_midi(str(p), tempo_scale=tempo_scale)
 
+    if DYNAMIC_MAP:
+        n_remapped = 0
+        for note in notes:
+            tgt = DYNAMIC_MAP.get(note.dynamic)
+            if tgt and tgt in PMP.DYNAMIC_BY_NAME:
+                note.volume = PMP.velocity_to_volume(PMP.DYNAMIC_BY_NAME[tgt])
+                if getattr(note, "volume_end", None) is not None:
+                    note.volume_end = note.volume
+                note.dynamic = tgt
+                n_remapped += 1
+        if n_remapped:
+            print(f"  dynamic remap {DYNAMIC_MAP}: {n_remapped} notes rewritten")
+
     if bowing_rule:
         PMP.assign_bowings(notes, bowing_rule)
 
@@ -1135,6 +1178,22 @@ class PieceResidualEnv(gym.Env):
 
         n = N_ENVELOPE_SEGMENTS
         weights = np.clip(1.0 + spd_res * SPEED_RESIDUAL_FRAC, 0.25, 4.0)
+
+        # Written accents shape the PLANNER'S envelope, before the policy's.
+        # The score marks 12, all 0.500 s, so every one is segmented. Segment 0
+        # takes less bow (the ramp up), segment 1 takes more (the accent), and
+        # depth leans in on the same beat so it reads as attack rather than
+        # only volume. The residual then shapes on top, and the baseline gets
+        # the articulation too -- which is the point: articulation is written
+        # in the score, not something the policy should have to rediscover.
+        accent_depth = np.zeros(n)
+        note = (self.notes[s.note_index]
+                if 0 <= s.note_index < len(self.notes) else None)
+        if note is not None and "accent" in (getattr(note, "articulations", None) or ()):
+            k = min(n, len(ACCENT_SPEED_SHAPE))
+            weights[:k] = np.clip(weights[:k] * np.asarray(ACCENT_SPEED_SHAPE[:k]),
+                                  0.25, 4.0)
+            accent_depth[:k] = np.asarray(ACCENT_DEPTH_MM[:k]) / 1000.0
         # Equal time per segment; the speed weights decide how much bow each
         # one covers. Distributing by time (not distance) is what makes the
         # weights read as "speed during this part of the note".
@@ -1174,7 +1233,7 @@ class PieceResidualEnv(gym.Env):
             # segment simply runs a little long rather than being cut short.
             cruise = (span_m / seg_duration) * peak_over_mean
             cruise = float(np.clip(cruise, 1e-4, PMP.SPEED_MAX))
-            seg_depth = float(np.clip(
+            seg_depth = float(np.clip(accent_depth[i] +
                 base_depth + float(dep_res[i]) * DEPTH_RESIDUAL_M,
                 DEPTH_LO, DEPTH_HI))
             # Segment 0's accel is the ATTACK ramp from rest -- leave it as
