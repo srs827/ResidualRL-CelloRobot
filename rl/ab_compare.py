@@ -136,9 +136,16 @@ def play(label: str, piece: str, checkpoint: Path | None,
     if out_dir and (out_dir / "compiled_report.json").exists():
         rep = json.loads((out_dir / "compiled_report.json").read_text())
         rep = rep.get("report", rep)
-    wav = out_dir / "compiled_full.wav" if out_dir else None
+    # The wav's name depends on the render path (render_compiled writes
+    # compiled_full.wav, render_baseline lets PiecePlayer name it), so
+    # discover it instead of hardcoding one dialect — the hardcoded name is
+    # what printed "(no wav written)" for six takes that had recorded fine.
+    wav = None
+    if out_dir and out_dir.is_dir():
+        wavs = sorted(out_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+        wav = wavs[-1] if wavs else None
     return {"label": label, "ok": proc.returncode == 0, "out_dir": out_dir,
-            "wav": wav if (wav and wav.exists()) else None, "report": rep}
+            "wav": wav, "report": rep}
 
 
 def countdown(sec: int, nxt: str) -> None:
@@ -210,16 +217,29 @@ def main() -> None:
                 countdown(args.gap, sides[(i + 1) % len(sides)][0])
 
     print(f"\n{'=' * 62}\n  SUMMARY\n{'=' * 62}")
-    hdr = f"{'pass':<34}{'tempo':>7}{'post-hoc q':>12}"
+    hdr = f"{'pass':<34}{'tempo':>7}{'drift ms':>10}{'post-hoc q':>12}"
     print(hdr)
     for r in results:
         rp = r["report"] or {}
+        # Speak both report dialects: render_compiled writes tempo_ratio and
+        # mean_quality_posthoc; render_baseline writes wall_s/written_s and
+        # per-note drift stats instead (and no post-hoc score yet).
         tr = rp.get("tempo_ratio")
+        if tr is None and rp.get("wall_s") and rp.get("written_s"):
+            tr = rp["wall_s"] / max(rp["written_s"], 1e-6)
+        dm = rp.get("drift_mean_ms")
         q = rp.get("mean_quality_posthoc")
         print(f"{r['label']:<34}"
               f"{(f'{tr:.3f}' if tr is not None else '—'):>7}"
+              f"{(f'{dm:+.1f}' if dm is not None else '—'):>10}"
               f"{(f'{q:.3f}' if q is not None else '—'):>12}"
               + ("" if r["ok"] else "   [FAILED]"))
+    if any((r["report"] or {}).get("mode") == "baseline-render"
+           and "mean_quality_posthoc" not in (r["report"] or {})
+           for r in results):
+        print("\n(post-hoc q is not computed on the baseline-render path yet "
+              "— score the wavs listed below by hand or via perform's "
+              "compiled render)")
     print("\nrecordings:")
     for r in results:
         print(f"  {r['label']:<34}{r['wav'] or '(no wav written)'}")
