@@ -47,6 +47,27 @@ Check the header says the aiming mode and gain offset you expect. Then:
 `dyn 0.000` with in-zone 0 means the calibration is wrong — **stop**. Ignore
 tone in episodes 1–2 (random warm-up).
 
+Ctrl-C once saves the model and replay buffer — resume with `--resume-run`
+(see 5), setting `--timesteps` to what is left and re-setting any `CELLO_*`
+you started with. Stopped after 6959 of 18200 strokes:
+
+```bash
+CELLO_DYNAMIC_MAP="p=f" caffeinate -dims ~/venvs/cello311/bin/python -u \
+  rl/train_piece_logged.py "$PIECE" --real --timesteps 11241 --ckpt-every 10 \
+  --no-calibrated-dynamics --resume-run rl/checkpoints_piece/run_20260819_153618
+```
+
+The interrupt message names the run dir; otherwise it is the newest. Strokes
+done is that file's line count minus its header line:
+
+```bash
+D=$(ls -dt rl/checkpoints_piece/run_* | head -1)
+echo $(( $(wc -l < "$D/stroke_log.jsonl") - 1 ))
+```
+
+Count strokes, not episodes — the `[checkpoint] N/M` counter restarts at zero
+on every resume.
+
 ### 5. When the link drops
 
 Checkpoints save every 250 steps and on Ctrl-C, so little is lost. If the log
