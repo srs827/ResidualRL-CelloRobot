@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -349,6 +350,33 @@ SPEED_SWEET_FALLOFF = 0.04       # m/s to fall from 1.0 to 0 outside the band
 # band costs 0.71*W. W = 0.20 makes that 0.14 -- enough to cancel the exploit
 # on the shortest notes, without outweighing the judge where the judge works.
 W_SPEED_TARGET = 0.20
+
+# ── global trims: shift the PLANNER'S NOMINAL, not the residual ────
+# CELLO_SPEED_TRIM (multiplier) and CELLO_DEPTH_TRIM_MM (additive mm) move
+# the plan itself, so the zero-residual baseline AND any policy on top of it
+# both inherit them -- which is what makes a baseline-vs-policy comparison
+# still fair while the operating point moves.
+#
+# Why they exist: torque_contact_est_N fell from ~4.1 N (2026-08-18 yunpiece
+# runs) to ~3.3 N (08-19), i.e. below dataset_a_final's own 3.69-5.66 N band,
+# and a listener independently heard the instrument get quieter. Playing a
+# little faster and a little deeper puts the rig back inside the range the
+# judge's 500 recordings were collected at, instead of asking the reward to
+# compensate for a mechanical drift it cannot fix.
+#
+# Sizing, from the 500 human tone ratings (standard config): tone peaks near
+# 0.15 m/s and yunpiece's nominal is 0.1380, so ~1.10 lands on the peak.
+# Depth is the weaker lever here -- force tracks depth at well under 1 N
+# across the whole +-2 mm envelope -- so a trim can only recover part of a
+# 0.8 N loss; +0.3..+0.5 mm is meaningful without crowding DEPTH_HI.
+#
+# These are a MEASUREMENT-CONDITION correction, not a tuning knob. Leave them
+# at the defaults once the contact drift is fixed at the bow.
+SPEED_TRIM = float(os.environ.get("CELLO_SPEED_TRIM", 1.0))
+DEPTH_TRIM_M = float(os.environ.get("CELLO_DEPTH_TRIM_MM", 0.0)) / 1000.0
+if SPEED_TRIM != 1.0 or DEPTH_TRIM_M:
+    print(f"  global trim: speed x{SPEED_TRIM:.3f}  depth {DEPTH_TRIM_M*1000:+.2f} mm "
+          f"(applied to the plan, so baseline and policy both get it)")
 
 W_SPEAK_MEAN = 0.0
 # DIAGNOSTIC ONLY -- logged, never priced. Measured
@@ -1214,7 +1242,7 @@ class PieceResidualEnv(gym.Env):
         # slower instead of 33%, and the swell on long notes is untouched.
         # Dim 0 still shapes the attack where an envelope exists; it just no
         # longer drags every short note down with it.
-        speed_scale = 1.0 + float(spd_res.mean()) * SPEED_RESIDUAL_FRAC
+        speed_scale = (1.0 + float(spd_res.mean()) * SPEED_RESIDUAL_FRAC) * SPEED_TRIM
 
         # Base depth: the planner's, unless dynamics were re-aimed -- then use
         # the depth the ORIGINAL written dynamic implies, so speed carries the
@@ -1228,8 +1256,8 @@ class PieceResidualEnv(gym.Env):
         # expand_dynamic_range() documents as "thin and unsteady rather than
         # soft", and the policy sat in it.
         depth_res0 = float(dep_res.mean())
-        depth = float(np.clip(base_depth + depth_res0 * DEPTH_RESIDUAL_M,
-                              DEPTH_LO, DEPTH_HI))
+        depth = float(np.clip(base_depth + depth_res0 * DEPTH_RESIDUAL_M
+                              + DEPTH_TRIM_M, DEPTH_LO, DEPTH_HI))
 
         desired = s.length * speed_scale
         if direction == "down":
