@@ -79,7 +79,7 @@ stroke  8:  total 3.04   stroke 20:  total 7.03   stroke 33:  total 1.35
 mean 3.81 -> GO
 ```
 
-Two readings matter more than the verdict.
+Two readings matter more than the GO itself.
 
 **The noise floor collapsed.** Total repeat sd 0.013–0.020 against
 0.118–0.128 on yunpiece — 8x lower. r_dynamic repeat sd, the term that
@@ -93,7 +93,7 @@ designed to produce, and the gate produced it before the training run.
 speed and ±1 mm depth probes; n is small, but the direction is the same
 at all three strokes. The CNN's short-note inversion (aug18 Part 2) and its per-stroke
 resolution are two separate problems, and the second one does not go
-away on friendly repertoire. Tonight's total was carried by r_defect
+away on friendly repertoire. The total here was carried by r_defect
 (2.18/12.60) and r_dynamic (7.42 where not saturated). This hardens the
 case for the short-note annotation + retrain plan (Part 5).
 
@@ -104,7 +104,7 @@ trial inside the zone, the deadband saturating as designed.)
 
 `--timesteps 4200 --ckpt-every 10`, 0.84 s/step, ~35 s/episode.
 
-The ethernet link dropped at episode 21 — the 4th drop of the night,
+The ethernet link dropped at episode 21 — the 4th drop of the session,
 each cured by reseating the AX88179B dongle; swap the dongle or cable
 before the next long run. First live use of `--resume-run`: it found the
 750-step checkpoint plus replay buffer, derived episode offset 22 from
@@ -121,7 +121,7 @@ built to do. dyn slid in the last thirty episodes (in-zone dropping to
 18–25/42 on bad episodes) while tone stayed flat; see 2.4 before
 reading that as reward trade-off.
 
-One physical series logged at every set-down through the night:
+One physical series logged at every set-down through the session:
 
 ```
 contact at u=0.5:   3.11 N  ->  2.72  ->  2.49  ->  2.29 N
@@ -149,7 +149,7 @@ Two findings and one stop decision.
 **§7.5 reproduced, with a twist.** Return ranks ep0060 first — matching
 the training curve's peak almost exactly — while tone puts `final`
 ahead by a margin (+0.08) that n=2 can neither dismiss nor confirm. On
-the 17th the measurement and the docstring heuristic disagreed; tonight
+the 17th the measurement and the docstring heuristic disagreed; this time
 the two measurements disagree with each other. select_best should print
 a confidence interval and decline to pick inside it.
 
@@ -179,7 +179,7 @@ replay longest are the trials furthest apart in rig state.
 ### 2.5 What is still open
 
 The paired baseline-vs-policy `ab_compare` on twinkle — the actual
-"did training win" verdict — deferred until the rig is back in a stable state. It is a 10-minute
+"did training win" question — deferred until the rig is back in a stable state. It is a 10-minute
 run: rosin/reposition, recalibrate (rosin moves the gain), then the
 paired comparison with ep0060. Note: I interrupted select_best during
 its confirm pass, so check whether `best.json` was written before
@@ -216,7 +216,7 @@ within-session drift evidence we have logged, and it was free.
 ## Part 4: The gain knob is excluded (§7.1 partial answer)
 
 A few days ago I put thin witness tape across the Scarlett's gain
-knobs. Checked tonight: unmoved. Combined with the offset stability —
+knobs. Checked this session: unmoved. Combined with the offset stability —
 +5.22 measured on t1 on the 17th, +5.06 on yunpiece on the 18th,
 0.16 dB apart once piece-matched — the electrical chain has been
 steady all week. The 3.9 dB take-level jump has to come from what was
@@ -237,7 +237,7 @@ the compensating terms are the ones that keep needing repair.
 With the draft due Friday (8/22) and ICRA on 9/15, here is what I would
 suggest — open to discussion:
 
-1. **Let the paper advance on twinkle first.** Tonight provides the
+1. **Let the paper advance on twinkle first.** This session provides the
    full-loop demonstration on in-distribution repertoire (gate GO at
    3.81, an 8x-lower noise floor, a real learning curve,
    resume-after-crash) — pending only the paired comparison under stable conditions.
@@ -264,7 +264,7 @@ the constraint driving all of this is the Friday draft.
 
 ---
 
-## Part 6: Measured wrong, or nearly, tonight
+## Part 6: Measured wrong, or nearly, this session
 
 - **"Eval below training" is a drift artifact until proven otherwise.**
   I nearly read the select_best table as "the policy got worse" before
@@ -273,7 +273,7 @@ the constraint driving all of this is the Friday draft.
 - **The split ranking** (return → ep0060, tone → final) is undecidable at
   n=2/n=4. Nothing should be concluded from `final`'s 0.504 until a
   fresh-rig eval repeats it.
-- **Four link drops in one night**, all cured by reseating the USB
+- **Four link drops in one session**, all cured by reseating the USB
   dongle, one of them killing a training run mid-episode. The resume
   path held, but the dongle is now the least reliable component on the
   rig. Swap it before the next long run.
@@ -287,7 +287,7 @@ the constraint driving all of this is the Friday draft.
 ## Next session
 
 Ready to hand over: after landing whatever fixes go in (PR #4
-included), this is either the 25-minute final comparison on tonight's checkpoints
+included), this is either the 25-minute final comparison on this session's checkpoints
 or a fresh twinkle retrain end to end (~1.5 h — the recipe is proven).
 Otherwise it waits for my next lab slot.
 
