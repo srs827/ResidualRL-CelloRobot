@@ -39,6 +39,20 @@ if str(REPO_ROOT) not in sys.path:
 from rl.piece_env import PMP, ExecutorBase, ExecStroke, StrokeResult
 from rl.loudness import measure_dbfs
 
+# The process-wide audio input stream, shared by every HardwareExecutor
+# instance (see _start_audio for why it is opened once and never closed).
+# "owner" is the executor currently recording; the callback routes chunks
+# to it and drops audio when nobody is.
+_AUDIO = {"stream": None, "key": None, "owner": None}
+
+
+def _shared_audio_callback(indata, frames, t, status):
+    ex = _AUDIO["owner"]
+    if ex is None or not ex._recording:
+        return
+    ex._chunks.append(indata[:, ex.audio_channel - 1].copy()
+                      if indata.ndim > 1 else indata.copy())
+
 WINDOW_SEC = 0.5          # classifier window (SoundClassifier convention)
 PRE_ROLL_SEC = 0.05       # skip the attack transient when the stroke is long
 
@@ -127,7 +141,6 @@ class HardwareExecutor(ExecutorBase):
             audio_channel = channel
         self.audio_channel = audio_channel
         print(f"Audio: device {self.audio_device}, channel {self.audio_channel}")
-        self._stream = None
         self._chunks: list[np.ndarray] = []
         self._audio_t0 = None
         self._recording = False
@@ -140,34 +153,51 @@ class HardwareExecutor(ExecutorBase):
 
     # ── audio ─────────────────────────────────────────────────────
 
-    def _audio_callback(self, indata, frames, t, status):
-        if not self._recording:
-            return
-        self._chunks.append(indata[:, self.audio_channel - 1].copy()
-                            if indata.ndim > 1 else indata.copy())
-
     def _start_audio(self):
-        # One stream for the whole process, gated by _recording. Tearing the
-        # stream down per episode is not safe on macOS: CoreAudio's IO thread
-        # can deliver one more buffer to the just-closed stream's callback,
-        # which lands in freed memory (crashed reproducibly on the 3rd
-        # open/close cycle, 2026-08-18). The flag gives the same
-        # chunks-only-between-start-and-stop semantics without ever closing.
+        # One stream for the whole PROCESS, gated by _recording. Tearing the
+        # stream down is not safe on macOS: CoreAudio's IO thread can deliver
+        # one more buffer to the just-closed stream's callback, which lands
+        # in freed memory (crashed reproducibly on the 3rd open/close cycle,
+        # 2026-08-18). The flag gives the same chunks-only-between-start-and-
+        # stop semantics without ever closing.
+        #
+        # The stream is shared across HardwareExecutor INSTANCES, not owned
+        # by one: driver_eval-style code constructs a fresh executor per grid
+        # cell, and with close() no longer closing, per-instance streams
+        # would leak one open input stream per cell (writeup-aug18 Part 7).
+        # The module-level callback routes chunks to whichever executor is
+        # currently recording.
         self._chunks = []
-        if self._stream is None:
-            self._stream = self._sd.InputStream(
+        key = (self.audio_device, self.audio_channel, self.sample_rate)
+        if _AUDIO["stream"] is None or _AUDIO["key"] != key:
+            if _AUDIO["stream"] is not None:
+                # Config changed mid-process (different device/channel/rate):
+                # the old stream must go. This is the one remaining close and
+                # it carries the documented teardown race; it never happens in
+                # any current caller (config is fixed per process).
+                try:
+                    _AUDIO["stream"].stop()
+                    _AUDIO["stream"].close()
+                except Exception:
+                    pass
+                _AUDIO["stream"] = None
+            stream = self._sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=self.audio_channel,
                 device=self.audio_device,
                 dtype="float32",
-                callback=self._audio_callback,
+                callback=_shared_audio_callback,
             )
-            self._stream.start()
+            stream.start()
+            _AUDIO["stream"], _AUDIO["key"] = stream, key
+        _AUDIO["owner"] = self
         self._audio_t0 = time.time()
         self._recording = True
 
     def _stop_audio(self):
         self._recording = False
+        if _AUDIO["owner"] is self:
+            _AUDIO["owner"] = None
 
     @staticmethod
     def _window_bounds(t_start: float, t_end: float) -> tuple[float, float]:
