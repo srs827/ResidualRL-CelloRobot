@@ -17,15 +17,17 @@ ping -c3 192.168.1.100
 
 ### 2. Calibrate on the piece you will train
 
-
 Finds the offset between what the model predicts and what the microphone hears (audio recording calibration).
 
 ```bash
 caffeinate -dims ~/venvs/cello311/bin/python rl/calibrate_gain.py \
-  --measure --real --piece "$PIECE"          # add --write once the zones agree
+  --measure --real --write --piece "$PIECE"
 ```
 
-### 3. Gate (optional, ~25 min)
+### 3. Gate 
+
+Checks whether the reward is consistent per-stroke, and differs between different strokes. 
+Important to run this before training because if the tests fail there is some calibration issue.
 
 ```bash
 caffeinate -dims ~/venvs/cello311/bin/python rl/reward_noise.py \
@@ -72,6 +74,8 @@ caffeinate -dims ~/venvs/cello311/bin/python rl/ab_compare.py "$D" \
 ```
 
 `--tempo-scale` above 1 slows the piece down.
+`--no-calibrated-dynamics` turns off calibrate_dynamics() so the planner converts each written dynamic to a bow speed
+                           with a plain linear rule instead of inverting the loudness model to re-aim the note at its target dB level.
 
 ## Environment knobs
 
