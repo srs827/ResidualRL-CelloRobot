@@ -164,7 +164,26 @@ if not DRIVER:
         sys.exit("these flags do nothing without --driver: "
                  + ", ".join(f for f, _ in _inert))
 
-RUN_DIR = REPO_ROOT / "rl" / "checkpoints_piece" / f"run_{datetime.now():%Y%m%d_%H%M%S}"
+# Honour --save-dir as the PARENT of the run directory. The run keeps its
+# timestamped subdirectory either way (a resumed or repeated run must never
+# overwrite an earlier one), but where it lands is the caller's choice —
+# without this the flag was silently ignored here and every run, mock or
+# real, piled into rl/checkpoints_piece/. The argv value is rewritten below
+# so the stock executor's checkpoints and stroke audio land inside the same
+# run directory as the jsonl log.
+_SAVE_BASE = None
+_SAVE_IDX = None
+for _i, _a in enumerate(sys.argv):
+    if _a == "--save-dir" and _i + 1 < len(sys.argv):
+        _SAVE_BASE, _SAVE_IDX = Path(sys.argv[_i + 1]), _i + 1
+        break
+    if _a.startswith("--save-dir="):
+        _SAVE_BASE, _SAVE_IDX = Path(_a.split("=", 1)[1]), _i
+        break
+
+_RUN_BASE = _SAVE_BASE if _SAVE_BASE is not None else (
+    REPO_ROOT / "rl" / "checkpoints_piece")
+RUN_DIR = _RUN_BASE / f"run_{datetime.now():%Y%m%d_%H%M%S}"
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = RUN_DIR / "stroke_log.jsonl"
 EP_AUDIO_DIR = RUN_DIR / "episode_audio"
@@ -218,8 +237,12 @@ SUITE = _suite_fingerprint()
 # unless the caller chose one explicitly. Fixes the stock executor's
 # resumed-run wav overwrite (its per-process episode counter restarts at 1
 # inside a fixed directory).
-if not any(a == "--save-dir" or a.startswith("--save-dir=") for a in sys.argv):
+if _SAVE_BASE is None:
     sys.argv += ["--save-dir", str(RUN_DIR)]
+elif sys.argv[_SAVE_IDX].startswith("--save-dir="):
+    sys.argv[_SAVE_IDX] = f"--save-dir={RUN_DIR}"
+else:
+    sys.argv[_SAVE_IDX] = str(RUN_DIR)
 
 import rl.train_piece as tp
 

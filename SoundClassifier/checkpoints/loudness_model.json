@@ -48,6 +48,6 @@
     0.09,
     0.25
   ],
-  "gain_offset_db": 5.06,
-  "gain_offset_note": "Measured 2026-08-18 via rl/calibrate_gain.py (real zero-residual x1 on yunpiece.mxl, the training piece): median residual vs offset-free model, robust sd 2.63, n 182; zones p +4.88 (n 166) / f +5.41 (n 16), spread 0.53 dB. Previous value +8.04 (string_crossings.mid, 14 identical sustained notes in a single zone, where the cross-zone --write guard cannot fire); +5.22 measured on t1.mid 2026-08-15 agrees with this to 0.16 dB, so the chain did not drift and +8.04 was regime-specific. CAVEAT: the sd is 2.3x the model's own 1.14 dB residual and is STRUCTURED, not noise -- 128 strokes with identical commanded speed, depth and duration swing 13 dB with a ~10-stroke period. See the analysis-window alignment issue before trusting this to better than ~2 dB. Zones are absolute dBFS -- re-measure whenever the audio path changes."
+  "gain_offset_db": 6.55,
+  "gain_offset_note": "Measured 2026-08-19 via rl/calibrate_gain.py (real zero-residual x1 on twinkle_twinkle-open.mid): median residual vs offset-free model, sd 0.32, n 42. Previous value +5.06. Zones are absolute dBFS \u2014 re-measure whenever the audio path changes."
 }
