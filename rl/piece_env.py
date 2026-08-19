@@ -293,7 +293,9 @@ W_DEFECT = 0.25   # scaled against the tone term; applied as a penalty
 W_ONSET_ACCEL = 0.05
 
 # Envelope jerk. Small on purpose: it should discourage a jagged shape without
-# flattening the envelope into the single value it replaced.
+# flattening the envelope into the single value it replaced. The term itself
+# is a SQUARED step (see _reward), so it asks for smoother shaping rather than
+# merely less of it -- that is what carries the pressure, not this weight.
 W_ENVELOPE = 0.05
 # Segment speed below SPEED_MIN -> the string stops speaking.
 #
@@ -1429,8 +1431,30 @@ class PieceResidualEnv(gym.Env):
                              dtype=float)
         r_envelope = 0.0
         if exec_stroke.duration >= ENVELOPE_MIN_DURATION and N_ENVELOPE_SEGMENTS > 1:
+            # SQUARED step, not absolute (2026-08-19). |diff| is total
+            # variation, which is indifferent to how a change is distributed:
+            # one 1.6 step and two 0.8 steps cost exactly the same. So the old
+            # term could only ask for LESS shaping, never for SMOOTHER shaping,
+            # and the trained policy duly paid the flat toll and jumped --
+            # measured over the final 10 episodes, mean step between segments
+            # 0.79-0.83 on a [-1,1] range with maxima at 1.999, i.e. very
+            # nearly the full range at a junction. A listener heard exactly
+            # that: long notes whose volume "does not smoothly increase or
+            # decrease and sounds a bit abrupt".
+            #
+            # Squaring prices CONCENTRATION instead: the same total change
+            # costs half as much spread evenly (0.64 vs 1.28 for a 1.6 move),
+            # so a gradual crescendo is cheap and a lurch is not. It also
+            # self-limits -- once steps are small the penalty falls
+            # quadratically and stops competing with the tone terms.
+            #
+            # W_ENVELOPE stays 0.05. On the measured envelopes this already
+            # lifts the penalty from 28% of mean total reward to 38%; 0.10
+            # would take it to 77% and flatten the envelope into the single
+            # value it replaced, which is what the weight's comment warns
+            # against.
             r_envelope = -0.5 * float(
-                np.mean(np.abs(np.diff(spd_env))) + np.mean(np.abs(np.diff(dep_env))))
+                np.mean(np.diff(spd_env) ** 2) + np.mean(np.diff(dep_env) ** 2))
 
         # Harsh bow changes: acceleration above the pendant-verified nominal is
         # what makes an attack hard, and solve_stroke raises it freely to fit
