@@ -854,6 +854,23 @@ def main():
     if args.real == args.mock:
         sys.exit("choose exactly one of --real / --mock")
 
+    # A compile-only flag without --compile used to be silently ignored and
+    # the piece fell through to the stroke-by-stroke live path (~64 ms of
+    # dead air per note, the scratchy mode). Two A/B takes were run that way
+    # and their "611 ms mean slip" was blamed on the instrument before the
+    # command line was (writeup-aug18 Part 6). Refuse loudly instead,
+    # matching train_piece_logged's guard for driver-only flags.
+    if not args.compile:
+        _inert = [f for f in ("--render", "--flatten-envelope", "--max-run-s",
+                              "--fixed-action", "--only")
+                  if any(a == f or a.startswith(f + "=")
+                         for a in sys.argv[1:])]
+        if _inert:
+            sys.exit("these flags do nothing without --compile: "
+                     + ", ".join(_inert)
+                     + " — without it the piece plays through the "
+                       "stroke-by-stroke live path")
+
     from rl.piece_env import OBS_DIM
     model = None
     if args.checkpoint is not None:
