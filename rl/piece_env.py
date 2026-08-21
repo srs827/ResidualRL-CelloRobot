@@ -1713,11 +1713,42 @@ class PieceResidualEnv(gym.Env):
             r_speed_target = float(max(0.0, 1.0 - miss / SPEED_SWEET_FALLOFF))
         w_speed_target = W_SPEED_TARGET * (1.0 - fill)
 
-        # (1) dispatch cost of a shaped note, normalised by its duration
+        # (1) dispatch cost of a shaped note, normalised by its duration.
+        #
+        # First version charged every multi-segment stroke a flat
+        # DISPATCH_OVERHEAD/duration. On vocalise that was INERT: use_envelope
+        # depends on the note's duration, not on the action, so every stroke
+        # was segmented and the penalty was near-constant across actions --
+        # it shifted the reward's level without changing its gradient, and
+        # drift got worse rather than better (291 ms against the stock loop's
+        # 178).
+        #
+        # The policy does have a lever, in render_baseline's collapse rule: a
+        # note whose segments are identical in speed AND depth is dispatched
+        # as ONE moveL instead of a path. So a flat envelope costs nothing,
+        # and the cost of a shaped one is
+        #
+        #     DISPATCH_OVERHEAD_S           the path-vs-pose overhead, and
+        #     sum |dv| / accel              the junction time, since changing
+        #                                   bow speed by dv at the stroke's
+        #                                   acceleration takes dv/accel
+        #
+        # Both are things the action controls, so this now has a gradient:
+        # shape only where the tone gain outweighs the seconds it costs.
         r_timing = 0.0
-        if ALT_TIMING_PENALTY and len(exec_stroke.segments) > 1:
-            r_timing = -float(np.clip(
-                DISPATCH_OVERHEAD_S / max(exec_stroke.duration, 1e-3), 0.0, 1.0))
+        if ALT_TIMING_PENALTY:
+            segs = exec_stroke.segments
+            if len(segs) > 1:
+                flat = (len({round(g.speed, 6) for g in segs}) == 1
+                        and len({round(g.depth, 9) for g in segs}) == 1)
+                if not flat:
+                    dv = float(sum(abs(segs[i + 1].speed - segs[i].speed)
+                                   for i in range(len(segs) - 1)))
+                    accel = max(float(getattr(exec_stroke, "accel", 0.0)
+                                      or PMP.MOVE_ACCEL), 1e-3)
+                    cost = DISPATCH_OVERHEAD_S + dv / accel
+                    r_timing = -float(np.clip(
+                        cost / max(exec_stroke.duration, 1e-3), 0.0, 1.0))
 
         total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
                  + w_speed_target * r_speed_target

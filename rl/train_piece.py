@@ -34,6 +34,7 @@ scripts/setup.ps1.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -321,6 +322,20 @@ def main(argv=None):
                           f"{steps_done}/{args.timesteps}: return {tot:.2f}  "
                           f"tone_eff {tn:.3f}   <- the line the policy has to "
                           f"cross")
+                    # Persist it. Printing alone loses the baseline once the
+                    # terminal scrolls, and these values are the entire point
+                    # of the toggle -- they are the line every checkpoint has
+                    # to be compared against, afterwards and offline.
+                    sink = getattr(quality_logger, "_f", None)
+                    if sink is not None:
+                        sink.write(json.dumps({
+                            "reference": True,
+                            "steps_done": int(steps_done),
+                            "timesteps": int(args.timesteps),
+                            "return": float(tot),
+                            "tone_eff": None if np.isnan(tn) else float(tn),
+                            "n_strokes": len(tones),
+                        }) + "\n")
                 except Exception as e:
                     print(f"(reference episode failed: {e} — continuing)")
                 finally:
