@@ -1347,6 +1347,24 @@ def parse_musicxml(path: str, tempo_scale: float = 1.0,
             note.volume = start_volume + t * (target - start_volume)
             note.dynamic = velocity_to_dynamic(volume_to_velocity(note.volume))
 
+            # Also carry the hairpin ACROSS the note, not just up to it.
+            #
+            # Interpolating only at the onset gives every note one flat level
+            # and steps between them, so a crescendo over four notes is four
+            # terraces. Setting volume_end to the level the hairpin has reached
+            # by the note's END lets the renderer ramp within the note as well.
+            # That matters most where notes are long: on vocalise, slur merging
+            # makes strokes a median 0.750 s and 93% of them are segmented, so
+            # a terrace is clearly audible as such.
+            #
+            # volume_end already exists for MIDI CC2 within-note shapes; this
+            # is the MusicXML path finally populating it.
+            end_beat_pos = (note.onset + note.duration) * tempo_bpm / 60.0 / tempo_scale
+            t_end = min(max((end_beat_pos - start_beat) / span, 0.0), 1.0)
+            v_end = start_volume + t_end * (target - start_volume)
+            if abs(v_end - note.volume) > 1e-3:
+                note.volume_end = float(min(max(v_end, 0.0), 1.0))
+
     meta = {
         "source": str(path),
         "format": "musicxml",

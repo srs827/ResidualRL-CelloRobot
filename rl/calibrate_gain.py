@@ -111,7 +111,7 @@ def _residuals_from_episode(args, model):
         scorer = RealScorer()
 
     env = PieceResidualEnv(piece_path=args.piece, executor=executor,
-                           scorer=scorer)
+                           scorer=scorer, tempo_scale=args.tempo_scale)
     zeros = np.zeros(env.action_space.shape, dtype=np.float32)
     out = []
     for ep in range(args.episodes):
@@ -146,6 +146,15 @@ def main():
                     help=f"plumbing test only (known answer +{KNOWN_ANSWER_DB})")
     ap.add_argument("--piece", default="MIDI-Files/t1.mid")
     ap.add_argument("--episodes", type=int, default=1)
+    ap.add_argument("--tempo-scale", type=float, default=1.0,
+                    help=">1 slows the piece down. MUST match the tempo you "
+                         "will TRAIN at: the offset is measured through the "
+                         "same analysis window the reward grades through, and "
+                         "note duration moves that window. Measured "
+                         "2026-08-19, the residual runs +7.73 dB per decade of "
+                         "note length, so vocalise at 120 bpm vs its written "
+                         "50 (a 2.4x change) is worth ~2.9 dB -- more than a "
+                         "2.5 dB zone.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--write", action="store_true",
                     help="update loudness_model.json gain_offset_db")

@@ -1189,6 +1189,31 @@ class PieceResidualEnv(gym.Env):
         accent_depth = np.zeros(n)
         note = (self.notes[s.note_index]
                 if 0 <= s.note_index < len(self.notes) else None)
+
+        # Written hairpins ramp WITHIN the stroke, not just between strokes.
+        #
+        # parse_musicxml sets volume_end to the level the crescendo has reached
+        # by the note's end. Without this the note plays one flat level and a
+        # crescendo over several notes comes out as terraces. Here each segment
+        # takes the volume the hairpin has reached at its own midpoint, and the
+        # speed weight is the ratio of that segment's target speed to the
+        # stroke's mean -- so the bow is redistributed to be slower at the quiet
+        # end and faster at the loud one. Total bow and total duration are
+        # unchanged (the weights are normalised), so this shapes the note
+        # without touching rhythm or bow budget.
+        #
+        # It applies to the PLANNER'S envelope, so the baseline gets written
+        # crescendos too and the policy shapes on top rather than having to
+        # rediscover the score.
+        if note is not None and getattr(note, "volume_end", None) is not None:
+            v0, v1 = float(s.volume_target), float(note.volume_end)
+            if abs(v1 - v0) > 1e-3:
+                mids = (np.arange(n) + 0.5) / n
+                vseg = v0 + mids * (v1 - v0)
+                sseg = np.array([PMP.volume_to_speed(float(v)) for v in vseg])
+                ref = float(np.mean(sseg))
+                if ref > 1e-9:
+                    weights = np.clip(weights * (sseg / ref), 0.25, 4.0)
         if note is not None and "accent" in (getattr(note, "articulations", None) or ()):
             k = min(n, len(ACCENT_SPEED_SHAPE))
             weights[:k] = np.clip(weights[:k] * np.asarray(ACCENT_SPEED_SHAPE[:k]),
