@@ -556,6 +556,16 @@ def render_baseline(strokes, report_dir, output_dir=None,
     except Exception as e:
         print(f"  (player.save failed: {type(e).__name__}: {e})")
 
+    # Release RTDE before returning. baseline_controller only registers
+    # disconnect via atexit, so within ONE process a second PiecePlayer hits
+    # "RTDE input registers are already in use" -- which is exactly what
+    # --repeats does. Closing per take also keeps the takes independent
+    # (fresh timeline, fresh audio buffer), which is the point of repeating.
+    try:
+        player.close()
+    except Exception as e:
+        print(f"  (player.close failed: {type(e).__name__}: {e})")
+
     timeline = list(getattr(player, "timeline", []))
     if timeline:
         (report_dir / "timeline.json").write_text(json.dumps(timeline, indent=2))
@@ -970,6 +980,10 @@ def main():
             for i in range(max(1, args.repeats)):
                 if args.repeats > 1:
                     print(f"\n--- take {i + 1}/{args.repeats}")
+                    if i:
+                        # Let the controller finish releasing the RTDE
+                        # registers before the next take reconnects.
+                        time.sleep(2.0)
                 takes.append(render_baseline(
                     strokes, out_dir,
                     flatten_envelope=args.flatten_envelope,
