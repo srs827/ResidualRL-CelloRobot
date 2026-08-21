@@ -109,3 +109,40 @@ caffeinate -dims ~/venvs/cello311/bin/python rl/ab_compare.py "$D" \
 | `CELLO_SPEED_TRIM` / `CELLO_DEPTH_TRIM_MM` | scale plan speed / add depth |
 
 
+
+## Alternate loop (`CELLO_ALT_LOOP=1`)
+
+Four changes, one switch. Each targets a measured cause of the residual not
+beating the planner:
+
+| | |
+|---|---|
+| timing penalty | charges a stroke for the dispatch cost of shaping it |
+| zero-init | actor starts AT the baseline — `mu` **and** `log_std`, ent_coef 0.1 |
+| reference episodes | zero-residual take every 10 episodes, logged as `{"reference": true}` |
+| phrase scoring | judge sees a full window instead of a fill-shifted fragment |
+
+It also raises `ENVELOPE_MIN_DURATION` 0.40 → 0.50 s so the policy only
+shapes notes the judge can grade (the CNN agrees with human ratings +0.879 on
+sustained notes and inverts on 0.111 s ones).
+
+Run the stock command with the prefix; drop it for the before/after pair.
+
+```bash
+CELLO_ALT_LOOP=1 caffeinate -dims ~/venvs/cello311/bin/python -u \
+  rl/train_piece_logged.py "$PIECE" --real --timesteps 18200 --ckpt-every 10 \
+  --no-calibrated-dynamics
+```
+
+The header must print `ALT loop: timing_penalty=True zero_init=True
+phrase_scoring=True`. If it does not, the variable did not take and this is a
+stock run. Early episodes look *quiet* rather than random — that is the
+zero-init working, not a stall.
+
+Individual toggles: `CELLO_TIMING_PENALTY`, `CELLO_ZERO_INIT`,
+`CELLO_PHRASE_SCORING`, `CELLO_REFERENCE_EVERY`, `CELLO_ENVELOPE_MIN_S`.
+
+**`ab_compare` needs `--no-calibrated-dynamics` explicitly.** Its
+`--calibrated-dynamics` default is True and, until 2026-08-21, appended
+nothing — so every A/B silently ran uncalibrated. Now that the flag works,
+the default would run *calibrated* and no longer match how the run trained.
