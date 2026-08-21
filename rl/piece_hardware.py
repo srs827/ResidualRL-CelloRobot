@@ -229,6 +229,31 @@ class HardwareExecutor(ExecutorBase):
         if _AUDIO["owner"] is self:
             _AUDIO["owner"] = None
 
+    def _wait_for_window(self, window_end: float, t_end: float) -> None:
+        """
+        Block until the audio buffer covers window_end, then return.
+
+        The input arrives in ~93 ms blocks (4096 samples at 44.1 kHz), and
+        the old fixed 20 ms grace lost the race to that quantum on most
+        strokes: the window's final block was still in flight when the slice
+        was cut, so the judge scored a truncated window zero-padded with
+        silence it never saw in training. Poll for ARRIVAL instead -- return
+        as soon as the buffered samples reach window_end (average wait ~half
+        a block, worst one block) -- with a deadline as the backstop so a
+        stalled stream can never hang the run: 0.15 s past the window covers
+        one full block period, and the t_end bound still caps how long a
+        short note's centred window can hold the loop.
+        """
+        deadline = min(window_end + 0.15, t_end + 0.5)
+        sr = float(self.sample_rate)
+        while time.time() < deadline:
+            t0 = self._audio_t0
+            if t0 is not None:
+                n = sum(len(c) for c in self._chunks)
+                if t0 + n / sr >= window_end:
+                    return
+            time.sleep(0.005)
+
     @staticmethod
     def _window_bounds(t_start: float, t_end: float) -> tuple[float, float]:
         """
@@ -332,16 +357,10 @@ class HardwareExecutor(ExecutorBase):
         ], dtype=np.float32)
 
         # Wait for the tail of the window to actually be captured before
-        # slicing. A fixed pause is not enough: the window is centred on the
-        # stroke, so a SHORT note needs audio from well past its end, and
-        # slicing early returns a truncated window that the classifier then
-        # zero-pads -- silence the model never saw in training. Wait for the
-        # real end of the window, with a bound so a stalled input stream can
-        # never hang the run.
+        # slicing -- see _wait_for_window for why a fixed grace period lost
+        # the race to the sound card's block quantum.
         window_end = self._window_bounds(t_start, t_end)[1]
-        deadline = min(window_end + 0.02, t_end + 0.5)
-        while time.time() < deadline:
-            time.sleep(0.01)
+        self._wait_for_window(window_end, t_end)
         audio, dbfs = self._slice_window(t_start, t_end)
 
         if self.save_dir and audio is not None:

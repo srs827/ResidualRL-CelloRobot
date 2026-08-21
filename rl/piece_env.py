@@ -1757,6 +1757,15 @@ class PieceResidualEnv(gym.Env):
             "mean_speed": exec_stroke.mean_speed,
             "depth_mm": exec_stroke.depth * 1000.0,
             "action": action.tolist(),
+            # The judge's EXACT inputs, so any score can be reproduced
+            # offline bit-for-bit from the episode wav: the 6-dim physical
+            # vector as fed to the classifier, and how many samples the
+            # slice actually got -- fewer than the window implies means the
+            # tail block lost the arrival race (piece_hardware's
+            # _wait_for_window is the fix; this field is the audit trail).
+            "physical": [round(float(x), 6) for x in result.physical],
+            "audio_n": (int(len(result.audio))
+                        if result.audio is not None else 0),
             **components,
         })
 
