@@ -124,7 +124,12 @@ class EpisodeQualityLogger:
                 extra = (f"   dyn {info['mean_dynamic']:.3f} "
                          f"(last-10 {float(np.mean(self.dynamics[-10:])):.3f}, "
                          f"in-zone {info.get('in_zone', '?')})")
-            print(f"[episode {n:4d}] tone {mean_tone:.3f} "
+            # Return is what SAC maximises and what select_best ranks by;
+            # leaving it off the console is how "watched tone, optimised
+            # total" confusions start.
+            ep_ret = (sum(s["total"] for s in ep_log) if ep_log else None)
+            ret_txt = f"  ret {ep_ret:6.2f}" if ep_ret is not None else ""
+            print(f"[episode {n:4d}] tone {mean_tone:.3f}{ret_txt} "
                   f"(overall {info['mean_quality']:.3f})   "
                   f"(last-10 tone {recent:.3f}){extra}")
 
