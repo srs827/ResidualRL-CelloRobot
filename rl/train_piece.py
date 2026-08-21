@@ -104,7 +104,18 @@ class EpisodeQualityLogger:
         for info in infos:
             if "mean_quality" not in info:
                 continue
-            self.history.append(info["mean_quality"])
+            # The reward optimises the length-aware head MIX ("tone" in the
+            # stroke log, what select_best reports), not the overall head.
+            # From 08-13 to 08-20 this line printed the overall head labelled
+            # "mean tone quality"; the ~+0.18 level gap between the heads
+            # read as a train-vs-eval collapse that never existed. Print the
+            # reward's own number; keep overall alongside for continuity
+            # with old run transcripts.
+            ep_log = info.get("episode_log")
+            mean_tone = (float(np.mean([s.get("tone", s["quality"])
+                                        for s in ep_log]))
+                         if ep_log else info["mean_quality"])
+            self.history.append(mean_tone)
             n = len(self.history) + self.episode_offset
             recent = float(np.mean(self.history[-10:]))
             extra = ""
@@ -113,8 +124,9 @@ class EpisodeQualityLogger:
                 extra = (f"   dyn {info['mean_dynamic']:.3f} "
                          f"(last-10 {float(np.mean(self.dynamics[-10:])):.3f}, "
                          f"in-zone {info.get('in_zone', '?')})")
-            print(f"[episode {n:4d}] mean tone quality "
-                  f"{info['mean_quality']:.3f}   (last-10 avg {recent:.3f}){extra}")
+            print(f"[episode {n:4d}] tone {mean_tone:.3f} "
+                  f"(overall {info['mean_quality']:.3f})   "
+                  f"(last-10 tone {recent:.3f}){extra}")
 
             if not self._warned_flat and "episode_log" in info:
                 scores = [s["quality"] for s in info["episode_log"]]

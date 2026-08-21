@@ -216,6 +216,25 @@ def main() -> None:
             if not is_last:
                 countdown(args.gap, sides[(i + 1) % len(sides)][0])
 
+    # Fill the post-hoc column for baseline-render passes: rl/posthoc_score
+    # re-scores the recorded take with the env-faithful judge inputs
+    # (measured speed/torque from the state log, tone head mix). Commanded
+    # phys said "no difference" on takes where measured phys said +0.062 at
+    # p=4e-6 — see that file's docstring before "simplifying" this away.
+    try:
+        from rl.posthoc_score import score_dir
+        for r in results:
+            rp = r["report"] or {}
+            if (rp.get("mode") == "baseline-render" and r["out_dir"]
+                    and "mean_quality_posthoc" not in rp):
+                s = score_dir(r["out_dir"])
+                if s:
+                    rp["mean_quality_posthoc"] = round(s["mean_tone"], 3)
+                    rp["posthoc_overall"] = round(s["mean_overall"], 3)
+                    r["report"] = rp
+    except Exception as e:
+        print(f"(post-hoc scoring unavailable: {type(e).__name__}: {e})")
+
     print(f"\n{'=' * 62}\n  SUMMARY\n{'=' * 62}")
     hdr = f"{'pass':<34}{'tempo':>7}{'drift ms':>10}{'post-hoc q':>12}"
     print(hdr)
@@ -237,9 +256,8 @@ def main() -> None:
     if any((r["report"] or {}).get("mode") == "baseline-render"
            and "mean_quality_posthoc" not in (r["report"] or {})
            for r in results):
-        print("\n(post-hoc q is not computed on the baseline-render path yet "
-              "— score the wavs listed below by hand or via perform's "
-              "compiled render)")
+        print("\n(post-hoc scoring failed for a pass above — run "
+              "rl/posthoc_score.py on its perform dir by hand)")
     print("\nrecordings:")
     for r in results:
         print(f"  {r['label']:<34}{r['wav'] or '(no wav written)'}")
@@ -247,9 +265,11 @@ def main() -> None:
           for r in results]
     qs = [(l, q) for l, q in qs if q is not None]
     if len(qs) >= 2:
-        print("\nNote: post-hoc q is the real classifier re-scoring the "
-              "recorded audio.\nIt is one number over one take — treat a "
-              "small gap as noise, not as a result.")
+        print("\nNote: post-hoc q is the judge's TONE head mix at measured "
+              "phys (rl/posthoc_score.py),\nthe same scale as the stroke log "
+              "and select_best. One number per take — treat a small\ngap as "
+              "noise; for per-note paired stats run posthoc_score.py with "
+              "both dirs.")
 
 
 if __name__ == "__main__":
