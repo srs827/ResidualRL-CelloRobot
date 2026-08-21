@@ -34,6 +34,7 @@ Zixian Liu, 2026-08-10.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -71,6 +72,11 @@ def _peel(flag: str, has_value: bool = False):
 
 
 NOTE_DBFS = bool(_peel("--note-dbfs"))
+# (3) alternate loop: play a zero-residual reference episode every N episodes
+# so the baseline is plotted on the same axes as the learning curve.
+REFERENCE_EVERY = int(_peel("--reference-every", has_value=True)
+                      or os.environ.get("CELLO_REFERENCE_EVERY", 0)
+                      or (10 if os.environ.get("CELLO_ALT_LOOP", "") not in ("", "0") else 0))
 EPISODE_OFFSET = int(_peel("--episode-offset", has_value=True) or 0)
 
 # ── --resume-run RUN_DIR: compute resume arguments FROM the run ─────────────

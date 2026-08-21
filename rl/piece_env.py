@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -401,6 +402,51 @@ for _pair in os.environ.get("CELLO_DYNAMIC_MAP", "").split(","):
 # too and the policy shapes on top of it rather than having to discover it.
 ACCENT_SPEED_SHAPE = (0.80, 1.30, 0.95)
 ACCENT_DEPTH_MM    = (0.10, 0.35, 0.00)
+
+# ── alternate loop (2026-08-21) ───────────────────────────────────
+# Four toggles, all OFF by default so the stock loop is bit-identical.
+# CELLO_ALT_LOOP=1 turns on all four; each can also be set individually.
+#
+# They exist because across three pieces the residual did not beat the
+# planner: yunpiece +0.017/+0.010 (inside take-to-take noise), vocalise
+# -0.058, twinkle negative. Each toggle targets one measured cause.
+_ALT = os.environ.get("CELLO_ALT_LOOP", "") not in ("", "0")
+
+def _alt_flag(name: str) -> bool:
+    v = os.environ.get(name)
+    return _ALT if v is None else v not in ("", "0")
+
+# (1) PRICE THE DISPATCH COST OF SHAPING A NOTE.
+#
+# rl/timing_model.json measured dispatch_overhead_s = 0.064 (n=34): what a
+# multi-segment note costs over a single-pose moveL. The reward never used it.
+# During training each stroke is dispatched alone with a scoring wait after
+# it, so accumulated drift does not exist and shaping is free; at performance
+# the bill arrives -- vocalise ran 38.9 ms drift on the baseline against
+# 177.7 ms for the policy, because every stroke there is segmented.
+#
+# So the policy collects tone credit for shaping and never pays the rhythm
+# cost that shaping causes. This charges it, normalised by the note's own
+# duration: a 64 ms overhead on a 1.5 s note is a smaller sin than on a
+# 0.111 s one. r_onset and r_envelope price HOW it shapes; nothing priced
+# WHETHER to.
+ALT_TIMING_PENALTY = _alt_flag("CELLO_TIMING_PENALTY")
+W_TIMING = 0.20
+try:
+    _tm = json.loads((REPO_ROOT / "rl" / "timing_model.json").read_text())
+    DISPATCH_OVERHEAD_S = float(_tm.get("dispatch_overhead_s", 0.064))
+except Exception:
+    DISPATCH_OVERHEAD_S = 0.064
+
+# (2) start the policy AT the baseline (train_piece.py zero-inits the actor)
+# (3) zero-residual reference episodes (train_piece_logged.py)
+# (4) score a full classifier window so the judge stays in distribution
+#     (piece_hardware.py)
+ALT_ZERO_INIT = _alt_flag("CELLO_ZERO_INIT")
+ALT_PHRASE_SCORING = _alt_flag("CELLO_PHRASE_SCORING")
+if _ALT or ALT_TIMING_PENALTY or ALT_ZERO_INIT or ALT_PHRASE_SCORING:
+    print(f"  ALT loop: timing_penalty={ALT_TIMING_PENALTY} "
+          f"zero_init={ALT_ZERO_INIT} phrase_scoring={ALT_PHRASE_SCORING}")
 
 SPEED_TRIM = float(os.environ.get("CELLO_SPEED_TRIM", 1.0))
 DEPTH_TRIM_M = float(os.environ.get("CELLO_DEPTH_TRIM_MM", 0.0)) / 1000.0
@@ -1667,8 +1713,15 @@ class PieceResidualEnv(gym.Env):
             r_speed_target = float(max(0.0, 1.0 - miss / SPEED_SWEET_FALLOFF))
         w_speed_target = W_SPEED_TARGET * (1.0 - fill)
 
+        # (1) dispatch cost of a shaped note, normalised by its duration
+        r_timing = 0.0
+        if ALT_TIMING_PENALTY and len(exec_stroke.segments) > 1:
+            r_timing = -float(np.clip(
+                DISPATCH_OVERHEAD_S / max(exec_stroke.duration, 1e-3), 0.0, 1.0))
+
         total = (W_QUALITY * quality_eff + W_DYNAMIC * r_dynamic
                  + w_speed_target * r_speed_target
+                 + W_TIMING * r_timing
                  + W_BOW * r_bow + W_SMOOTH * r_smooth
                  - W_DEFECT * r_defect + W_ONSET_ACCEL * r_onset
                  + W_ENVELOPE * r_envelope + W_SPEAK * r_speak
@@ -1681,6 +1734,7 @@ class PieceResidualEnv(gym.Env):
             "tone": float(tone), "window_fill": fill,
             "r_dynamic": r_dynamic, "r_bow": r_bow,
             "r_speed_target": float(r_speed_target),
+            "r_timing": float(r_timing),
             "w_speed_target": float(w_speed_target),
             "r_smooth": r_smooth, "err_db": float(err_db),
             "zone_cap_db": float(zone_cap_db),

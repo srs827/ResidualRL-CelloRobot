@@ -34,6 +34,7 @@ scripts/setup.ps1.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import rl.piece_env as pe
 from rl.piece_env import (
     PieceResidualEnv, MockExecutor, MockScorer, RealScorer,
 )
@@ -239,6 +241,39 @@ def main(argv=None):
             tensorboard_log=tb_log,
         )
 
+        # (2) START THE POLICY AT THE BASELINE.
+        #
+        # The action is a RESIDUAL, so zero IS the planner's nominal -- the one
+        # known-good point in the space. Stock SAC does not know that: it fills
+        # the buffer with `learning_starts` steps of UNIFORM RANDOM actions and
+        # begins with ent_coef near 0.85, so it samples at |a| ~ 0.57, wider
+        # than uniform. The policy therefore optimises away from random
+        # flailing, never away from the planner, and nothing in training ever
+        # asks whether it beats doing nothing.
+        #
+        # That predicts what we measured across three pieces: climbing away
+        # from random lands ABOVE a weak baseline (yunpiece, ~0 within noise)
+        # and BELOW a strong one (vocalise -0.058, twinkle negative). The
+        # outcome tracked the baseline's quality, which is the signature of the
+        # baseline not being the starting point.
+        #
+        # Zero-initialising the actor's output layer makes the untrained
+        # deterministic policy the baseline exactly, so any departure is a
+        # deliberate choice the critic has to justify. Standard practice in
+        # residual RL; omitted here until now.
+        if pe.ALT_ZERO_INIT:
+            import torch
+            mu = model.policy.actor.mu
+            with torch.no_grad():
+                mu.weight.zero_()
+                if mu.bias is not None:
+                    mu.bias.zero_()
+            model.ent_coef = "auto_0.1"          # start far less exploratory
+            model.learning_starts = min(model.learning_starts, 20)
+            print("  ALT zero-init: actor mu zeroed (policy starts AT the "
+                  "baseline), ent_coef auto_0.1, learning_starts "
+                  f"{model.learning_starts}")
+
     quality_logger = EpisodeQualityLogger()
 
     stem = Path(args.piece).stem
@@ -253,6 +288,40 @@ def main(argv=None):
                         callback=quality_logger,
                         reset_num_timesteps=False)
             steps_done += chunk
+
+            # (3) ZERO-RESIDUAL REFERENCE EPISODE.
+            #
+            # Nothing else in the loop asks whether the policy beats doing
+            # nothing. The residual's zero action IS the planner's nominal,
+            # but it is one sample among thousands and select_best is the
+            # first thing to test it -- after the whole run. On vocalise the
+            # training curve rose cleanly (tone_eff 0.363 -> 0.444) while the
+            # deterministic policy finished BELOW its own baseline (-0.058).
+            #
+            # Run here, at the chunk boundary, and NOT from the callback: the
+            # callback fires inside collect_rollouts, so resetting the env
+            # there would leave SB3's _last_obs stale and corrupt the rollout.
+            # Between chunks nothing is in flight and a reset is safe.
+            if pe.ALT_ZERO_INIT or os.environ.get("CELLO_REFERENCE", ""):
+                try:
+                    renv = env.envs[0].unwrapped if hasattr(env, "envs") else env
+                    obs0, _ = renv.reset()
+                    zero = np.zeros(renv.action_space.shape, dtype=np.float32)
+                    tot, tones, done = 0.0, [], False
+                    while not done:
+                        obs0, r0, te, tr, i0 = renv.step(zero)
+                        tot += float(r0); done = te or tr
+                        st = i0.get("stroke") or {}
+                        if "quality_eff" in st:
+                            tones.append(st["quality_eff"])
+                    tn = float(np.mean(tones)) if tones else float("nan")
+                    print(f"[reference] zero-residual baseline at "
+                          f"{steps_done}/{args.timesteps}: return {tot:.2f}  "
+                          f"tone_eff {tn:.3f}   <- the line the policy has to "
+                          f"cross")
+                except Exception as e:
+                    print(f"(reference episode failed: {e} — continuing)")
+
             model.save(str(latest))
             model.save_replay_buffer(str(latest) + "_buffer.pkl")
             print(f"[checkpoint] {steps_done}/{args.timesteps} steps "

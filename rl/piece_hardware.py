@@ -26,6 +26,7 @@ Requires: robot reachable, mic connected, .venv311.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -109,6 +110,12 @@ MIN_ANALYSIS_SEC = 0.08
 # attack_quality, which is a human-labelled judgement about exactly that part
 # of a stroke and is the only sound estimate available at that length.
 NOTE_MATCHED_WINDOW = True
+
+# (4) alternate loop: score a full classifier window even on short notes, so
+# the judge stays inside the distribution it was validated on. Off by default.
+PHRASE_SCORING = (os.environ.get("CELLO_PHRASE_SCORING",
+                                 os.environ.get("CELLO_ALT_LOOP", ""))
+                  not in ("", "0"))
 
 
 def _rec():
@@ -269,6 +276,30 @@ class HardwareExecutor(ExecutorBase):
         own release rather than into the next note.
         """
         dur = t_end - t_start
+
+        # (4) PHRASE SCORING: keep the judge inside its own distribution.
+        #
+        # The classifier was trained on 0.5 s windows of sustained bowing and
+        # measured 2026-08-19 against 500 human ratings at +0.879 on sustained
+        # notes -- and INVERTS on 0.111 s ones, scoring a take bowing at the
+        # speaking floor 0.674 against 0.392 for a good baseline. period_corr
+        # inverts the same way. On a piece that is mostly short notes, three
+        # quarters of the reward cannot see the music.
+        #
+        # Note-matched windows made each score honestly about ONE note, at the
+        # cost of handing the judge audio unlike anything it was trained on.
+        # This trades back: a full WINDOW_SEC centred on the note, so the judge
+        # is in distribution, accepting that a short note's score is partly
+        # about its neighbours. For RL that is coarser credit assignment rather
+        # than a wrong one -- adjacent notes get overlapping windows, so the
+        # gradient points at making the PHRASE sound good.
+        #
+        # Only touches notes too short to fill the window; longer ones already
+        # take a steady WINDOW_SEC from the middle.
+        if PHRASE_SCORING and dur <= WINDOW_SEC + 2 * PRE_ROLL_SEC:
+            centre = t_start + dur / 2.0
+            return centre - WINDOW_SEC / 2.0, centre + WINDOW_SEC / 2.0
+
         if dur > WINDOW_SEC + 2 * PRE_ROLL_SEC:
             centre = t_start + PRE_ROLL_SEC + (dur - PRE_ROLL_SEC) / 2.0
             return centre - WINDOW_SEC / 2.0, centre + WINDOW_SEC / 2.0
