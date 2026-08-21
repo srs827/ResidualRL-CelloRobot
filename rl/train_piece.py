@@ -264,15 +264,40 @@ def main(argv=None):
         # residual RL; omitted here until now.
         if pe.ALT_ZERO_INIT:
             import torch
-            mu = model.policy.actor.mu
+            actor = model.policy.actor
             with torch.no_grad():
-                mu.weight.zero_()
-                if mu.bias is not None:
-                    mu.bias.zero_()
-            model.ent_coef = "auto_0.1"          # start far less exploratory
+                actor.mu.weight.zero_()
+                if actor.mu.bias is not None:
+                    actor.mu.bias.zero_()
+                # log_std is its own nn.Linear. Leaving it at the default
+                # gives std ~ 1, so every ROLLOUT action is tanh(N(0,1)) and
+                # the run explores as widely as an un-zeroed one -- only the
+                # deterministic policy would have started at the baseline.
+                actor.log_std.weight.zero_()
+                if actor.log_std.bias is not None:
+                    actor.log_std.bias.fill_(pe.ALT_LOG_STD_INIT)
+                # SAC parses ent_coef in _setup_model(); assigning
+                # model.ent_coef here does nothing (verified 2026-08-21:
+                # log_ent_coef stayed at 1.0). Write the tensor.
+                if getattr(model, "log_ent_coef", None) is not None:
+                    model.log_ent_coef.data = torch.log(
+                        torch.ones(1, device=model.device)
+                        * pe.ALT_ENT_COEF_INIT)
+            # ...and stop the tuner from undoing it. target_entropy defaults
+            # to -dim(A); the tuner raises ent_coef whenever policy entropy is
+            # below target, which for a policy parked at zero is always.
+            adim = int(np.prod(model.action_space.shape))
+            model.target_entropy = float(
+                -pe.ALT_TARGET_ENTROPY_SCALE * adim)
             model.learning_starts = min(model.learning_starts, 20)
-            print("  ALT zero-init: actor mu zeroed (policy starts AT the "
-                  "baseline), ent_coef auto_0.1, learning_starts "
+            std0 = float(np.exp(pe.ALT_LOG_STD_INIT))
+            print(f"  ALT zero-init: actor mu zeroed and log_std bias "
+                  f"{pe.ALT_LOG_STD_INIT:+.1f} (std {std0:.3f}) -- both the "
+                  f"deterministic AND the sampled policy start at the "
+                  f"baseline")
+            print(f"  ALT zero-init: ent_coef {pe.ALT_ENT_COEF_INIT} "
+                  f"(written to log_ent_coef), target_entropy "
+                  f"{model.target_entropy:.1f}, learning_starts "
                   f"{model.learning_starts}")
 
     quality_logger = EpisodeQualityLogger()

@@ -443,6 +443,26 @@ except Exception:
 # (4) score a full classifier window so the judge stays in distribution
 #     (piece_hardware.py)
 ALT_ZERO_INIT = _alt_flag("CELLO_ZERO_INIT")
+
+# Zero-init needs three things to stick, and the first version did one.
+#
+#  - mu zeroed makes the DETERMINISTIC policy the baseline. But rollouts are
+#    stochastic: SAC's actor.log_std is its own nn.Linear, left at the default
+#    so std ~ 1 and every training action is tanh(N(0,1)) -- the policy
+#    explored just as widely as before, and only evaluation started at zero.
+#    Zeroing log_std's weight and setting its bias parks exploration NEAR the
+#    baseline, which is the point.
+#  - ent_coef is parsed in SAC._setup_model() at construction. Assigning
+#    model.ent_coef afterward, as this did, is INERT: verified 2026-08-21,
+#    log_ent_coef stayed at 1.0 after setting "auto_0.1". That is why the run
+#    that was supposed to start at 0.1 was observed at 0.804.
+#  - target_entropy defaults to -dim(A) = -6, and the tuner RAISES ent_coef
+#    whenever policy entropy sits under target, which for a policy deliberately
+#    parked at zero is always. Left alone it undoes the other two.
+ALT_LOG_STD_INIT = float(os.environ.get("CELLO_LOG_STD_INIT", -2.0))
+ALT_ENT_COEF_INIT = float(os.environ.get("CELLO_ENT_COEF_INIT", 0.1))
+ALT_TARGET_ENTROPY_SCALE = float(
+    os.environ.get("CELLO_TARGET_ENTROPY_SCALE", 2.0))
 ALT_PHRASE_SCORING = _alt_flag("CELLO_PHRASE_SCORING")
 if _ALT or ALT_TIMING_PENALTY or ALT_ZERO_INIT or ALT_PHRASE_SCORING:
     print(f"  ALT loop: timing_penalty={ALT_TIMING_PENALTY} "
@@ -598,7 +618,28 @@ N_ENVELOPE_SEGMENTS = 3
 # fraction of that — the segments would smear into each other. Short notes take
 # segment 0's residual applied to the whole stroke, which is the right reading
 # anyway: a 0.08 s note IS its attack.
-ENVELOPE_MIN_DURATION = 0.40
+ENVELOPE_MIN_DURATION = float(
+    os.environ.get("CELLO_ENVELOPE_MIN_S")
+    or (CLASSIFIER_WINDOW_SEC if _ALT else 0.40))
+
+# (4) UNDER THE ALT LOOP THE GATE RISES TO CLASSIFIER_WINDOW_SEC (0.5 s).
+#
+# 0.40 was chosen from the bow geometry above -- can a note be split without
+# the blends smearing. It never asked the other question: can the JUDGE SEE
+# the difference. It cannot, below a full window. A note shorter than
+# CLASSIFIER_WINDOW_SEC scores on a partial window, so _reward shifts weight
+# onto attack/release (fill-shift), and the measured agreement with human
+# ratings goes with it: the CNN correlates +0.879 with the ear on sustained
+# notes and INVERTS on 0.111 s ones, with period_corr -0.600 against the ear
+# on the fast passage. Shaping there earns tone credit that is uncorrelated
+# -- at times anti-correlated -- with what a listener hears, and it is the
+# same shaping that pushes the stroke onto the blended moveL(path) branch
+# measured at z=+10 to +18 in drift. Cost certain, benefit unmeasurable.
+#
+# At 0.5 s every shaped note has fill == 1.0: no shifting, no extrapolation
+# past where the judge was validated. Notes below the gate still take the
+# mean residual (speed and depth), so the policy keeps its say over them --
+# it just cannot carve an envelope the judge is unable to grade.
 
 # What a blended moveL PATH costs per CALL, over and above the motion.
 #
