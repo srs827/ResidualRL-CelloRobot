@@ -102,17 +102,27 @@ def newest_perform_dir(after: float) -> Path | None:
 
 
 def play(label: str, piece: str, checkpoint: Path | None,
-         calibrated: bool, tempo_scale: float) -> dict:
+         calibrated: bool, tempo_scale: float,
+         servo: bool = False) -> dict:
     """One compiled pass. Returns {label, out_dir, wav, report}."""
     cmd = [sys.executable, str(PERFORM), "--real", "--compile",
            "--tempo-scale", str(tempo_scale)]
+    if servo:
+        cmd.append("--servo")
     if checkpoint is None:
         cmd.append("--baseline")
     else:
         cmd.append(str(checkpoint))
     cmd.append(piece)
-    if not calibrated:
-        cmd.append("--no-calibrated-dynamics")
+    # perform.py defines --calibrated-dynamics (store_true, default False) and
+    # NO --no-calibrated-dynamics. Appending the negative form, as this did
+    # until 2026-08-21, is an unrecognized argument: argparse exits 2 before a
+    # note is played. The positive branch appended nothing, so calibrated=True
+    # silently ran UNcalibrated. Every A/B pass through 08-21 therefore ran
+    # uncalibrated -- which matches how the runs were trained, so the takes
+    # stand, but the flag did the opposite of what it said in both directions.
+    if calibrated:
+        cmd.append("--calibrated-dynamics")
 
     print(f"\n{'=' * 62}\n  {label}\n{'=' * 62}")
     print("  " + " ".join(cmd[1:]))
@@ -170,7 +180,14 @@ def main() -> None:
                     help="seconds between passes (default 6)")
     ap.add_argument("--order", choices=("before-first", "after-first"),
                     default="before-first")
-    ap.add_argument("--repeat", type=int, default=1)
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="play the A/B pair N times. With N>1 the summary "
+                         "reports mean+-sd per side, which is the only way to "
+                         "tell a real difference from take-to-take spread")
+    ap.add_argument("--servo", action="store_true",
+                    help="pass --servo to perform.py: stream long notes with "
+                         "servoL rather than the blended moveL(path) that "
+                         "shaped strokes overrun on")
     ap.add_argument("--tempo-scale", type=float, default=1.0,
                     help="stretch note durations. Short notes cannot reach a "
                          "speed that makes the string speak (SPEED_MIN=0.09 "
@@ -211,7 +228,7 @@ def main() -> None:
         for i, (label, ck) in enumerate(sides):
             results.append(play(label, args.piece, ck,
                                 args.calibrated_dynamics,
-                                args.tempo_scale))
+                                args.tempo_scale, servo=args.servo))
             is_last = (rep_i == args.repeat - 1) and (i == len(sides) - 1)
             if not is_last:
                 countdown(args.gap, sides[(i + 1) % len(sides)][0])
@@ -258,6 +275,24 @@ def main() -> None:
            for r in results):
         print("\n(post-hoc scoring failed for a pass above — run "
               "rl/posthoc_score.py on its perform dir by hand)")
+    if args.repeat > 1:
+        # Per-side mean+-sd. Without this a reader compares two single takes,
+        # which is how the 2026-08-21 vocalise pair (baseline 38.9 ms then
+        # 73.1 ms, same plan, same 29.2 s wall clock) got read as a change.
+        import statistics as _st
+        print("\nacross repeats (mean +- sd, n takes per side):")
+        for label in dict.fromkeys(r["label"] for r in results):
+            side = [r["report"] or {} for r in results if r["label"] == label]
+            for key, fmt in (("drift_mean_ms", "{:+.1f}"),
+                             ("mean_quality_posthoc", "{:.3f}")):
+                v = [x[key] for x in side if x.get(key) is not None]
+                if len(v) > 1:
+                    sd = _st.stdev(v)
+                    print(f"  {label:<34}{key:<22}"
+                          + fmt.format(_st.mean(v)) + f" +- {sd:.3f}  n={len(v)}")
+        print("  A difference between sides is only real if it is large "
+              "against these sd's.")
+
     print("\nrecordings:")
     for r in results:
         print(f"  {r['label']:<34}{r['wav'] or '(no wav written)'}")

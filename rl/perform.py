@@ -411,9 +411,33 @@ def measure_rhythm_from_motion(motion, strokes) -> dict:
     return out
 
 
+def _take_spread(takes):
+    """mean/sd across repeated takes of the SAME strokes.
+
+    The point of this number: on 2026-08-21 a vocalise baseline measured
+    38.9 ms mean drift and a second one 73.1 ms, and the pair was read as a
+    regression. Both takes had identical plans and near-identical wall clocks
+    (29.21 s vs 29.24 s) -- the difference was where the drift sat inside the
+    piece, not how long it took. With 17 notes a couple of late dispatches
+    move the mean a lot, so a single take per condition cannot support a
+    verdict. yunpiece's 182-note takes replicate to sd 0.25 ms; a 17-note
+    piece does not inherit that.
+    """
+    out = {"n_takes": len(takes)}
+    for k in ("drift_mean_ms", "drift_max_s", "drift_final_s", "wall_s",
+              "notes_over_20ms"):
+        vals = [t[k] for t in takes if k in t]
+        if len(vals) > 1:
+            out[k] = {"mean": round(float(np.mean(vals)), 3),
+                      "sd": round(float(np.std(vals, ddof=1)), 3),
+                      "takes": [round(float(v), 3) for v in vals]}
+    return out
+
+
 def render_baseline(strokes, report_dir, output_dir=None,
                     flatten_envelope: bool = False, collapse: bool = True,
-                    piece_path=None):
+                    piece_path=None, servo: bool = False,
+                    servo_threshold: float | None = None):
     """Play the compiled strokes through the BASELINE player's loop.
 
     This exists because render_compiled's batching is what broke the rhythm.
@@ -505,10 +529,22 @@ def render_baseline(strokes, report_dir, output_dir=None,
     except Exception as e:
         print(f"  could not check the audio input: {e}")
 
+    # servo: route notes >= servo_threshold through servoL instead of the
+    # blended moveL(path). Only multi-segment strokes reach that branch, and
+    # it is the one that overruns -- _play's own comment records 3-segment
+    # notes running 120 ms long, cut to ~55 ms by junction accel. A stroke the
+    # policy shapes cannot collapse to the single moveL (collapse requires
+    # identical speed AND depth across segments), so every shaped note pays
+    # that tax: measured 2026-08-21 on vocalise, baseline drift 38.9 ms vs
+    # 177.7 ms for the same piece with the policy's envelopes. servoL streams
+    # setpoints instead of blending through junctions, so there is no
+    # deceleration to recover from. Off by default -- moveL is the branch the
+    # judge's scores were calibrated on.
     player = PMP.PiecePlayer(record_audio=True,
                              output_dir=Path(output_dir or report_dir),
                              audio_device=audio_device,
-                             audio_channel=audio_channel)
+                             audio_channel=audio_channel,
+                             servo=servo, servo_threshold=servo_threshold)
     player.prepare(plan[0])
     elapsed = player.play(plan, total, lead_in=0.0)
 
@@ -847,6 +883,17 @@ def main():
                          "check, so --baseline --no-collapse reproduces the "
                          "training-frame zero-residual control: same actions "
                          "AND same dispatch branch as episode 0 saw.")
+    ap.add_argument("--servo", action="store_true",
+                    help="stream long notes with servoL instead of the blended "
+                         "moveL(path); only affects multi-segment (shaped) "
+                         "strokes, which are the ones that overrun")
+    ap.add_argument("--servo-threshold", type=float, default=None,
+                    help="note duration (s) at or above which --servo streams "
+                         "(default servo_player.HYBRID_THRESHOLD = 0.5)")
+    ap.add_argument("--repeats", type=int, default=1,
+                    help="render the SAME compiled strokes N times, and report "
+                         "the take-to-take drift/wall sd. A single take cannot "
+                         "tell a real timing difference from run-to-run spread")
     ap.add_argument("--render", choices=("baseline", "compiled"),
                     default="baseline",
                     help="how --compile dispatches. 'baseline' uses "
@@ -919,13 +966,27 @@ def main():
             print("[mock] compile plumbing OK; real render skipped")
             return
         if args.render == "baseline":
-            rep = render_baseline(strokes, out_dir,
-                                  flatten_envelope=args.flatten_envelope,
-                                  collapse=not args.no_collapse,
-                                  piece_path=args.piece)
+            takes = []
+            for i in range(max(1, args.repeats)):
+                if args.repeats > 1:
+                    print(f"\n--- take {i + 1}/{args.repeats}")
+                takes.append(render_baseline(
+                    strokes, out_dir,
+                    flatten_envelope=args.flatten_envelope,
+                    collapse=not args.no_collapse,
+                    piece_path=args.piece,
+                    servo=args.servo, servo_threshold=args.servo_threshold))
+            rep = takes[-1]
             print(json.dumps(rep, indent=2))
+            summary = {"report": rep}
+            if len(takes) > 1:
+                summary["takes"] = takes
+                summary["repeat_sd"] = _take_spread(takes)
+                print("\ntake-to-take spread (this is the floor any A/B "
+                      "difference has to clear):")
+                print(json.dumps(summary["repeat_sd"], indent=2))
             (out_dir / "compiled_report.json").write_text(
-                json.dumps({"report": rep}, indent=2))
+                json.dumps(summary, indent=2))
             return
         wall, audio, sr, run_starts, runs, a0rel, motion = \
             render_compiled(strokes, out_dir, max_run_s=args.max_run_s)
