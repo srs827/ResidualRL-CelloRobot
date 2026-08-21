@@ -304,7 +304,9 @@ def main(argv=None):
             # Between chunks nothing is in flight and a reset is safe.
             if pe.ALT_ZERO_INIT or os.environ.get("CELLO_REFERENCE", ""):
                 try:
-                    renv = env.envs[0].unwrapped if hasattr(env, "envs") else env
+                    venv = model.get_env()
+                    renv = (venv.envs[0].unwrapped if hasattr(venv, "envs")
+                            else env)
                     obs0, _ = renv.reset()
                     zero = np.zeros(renv.action_space.shape, dtype=np.float32)
                     tot, tones, done = 0.0, [], False
@@ -321,6 +323,23 @@ def main(argv=None):
                           f"cross")
                 except Exception as e:
                     print(f"(reference episode failed: {e} — continuing)")
+                finally:
+                    # Put the stack back in a steppable state WHATEVER
+                    # happened above. The reference runs the episode to
+                    # completion on the unwrapped env, so the Monitor wrapper
+                    # never sees the done and keeps needs_reset from the
+                    # previous rollout -- SB3's next collect_rollouts then
+                    # dies with "Tried to step environment that needs reset".
+                    # Resetting through the VecEnv clears every wrapper, and
+                    # _last_obs has to be re-synced or SB3 would act on an
+                    # observation the env no longer holds.
+                    try:
+                        # model.get_env() is the VecEnv SB3 actually steps;
+                        # `env` here is the raw Gym env whose reset() returns
+                        # an (obs, info) tuple that predict() would reject.
+                        model._last_obs = model.get_env().reset()
+                    except Exception as e:
+                        print(f"(post-reference reset failed: {e})")
 
             model.save(str(latest))
             model.save_replay_buffer(str(latest) + "_buffer.pkl")
