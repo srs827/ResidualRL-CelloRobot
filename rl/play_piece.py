@@ -104,12 +104,18 @@ def main(argv=None):
     print(f"Rolling out {label} on {args.piece} "
           f"({len(env.plan)} strokes/episode)")
 
-    rewards, qualities, dynamics, in_zone = [], [], [], []
+    rewards, qualities, tones, dynamics, in_zone = [], [], [], [], []
     try:
         for ep in range(args.episodes):
             total, mean_q, mean_d, log = rollout(env, model)
             rewards.append(total)
             qualities.append(mean_q)
+            # mean_q is the OVERALL head; the reward optimises the "tone"
+            # head mix (same mislabel train_piece.py carried until 08-21).
+            # Print both, labelled honestly.
+            mean_tone = float(np.mean([s.get("tone", s["quality"])
+                                       for s in log]))
+            tones.append(mean_tone)
             zoned = sum(1 for s in log if s["r_dynamic"] >= 0.999)
             in_zone.append(zoned / len(log))
             extra = ""
@@ -117,7 +123,7 @@ def main(argv=None):
                 dynamics.append(mean_d)
                 extra = f"   dynamics {mean_d:.3f}  in-zone {zoned}/{len(log)}"
             print(f"episode {ep+1}: return {total:8.2f}   "
-                  f"mean tone quality {mean_q:.3f}{extra}")
+                  f"tone {mean_tone:.3f} (overall {mean_q:.3f}){extra}")
             if args.verbose or args.episodes == 1:
                 print_episode(log)
     finally:
@@ -125,7 +131,8 @@ def main(argv=None):
 
     print(f"\n{label}")
     print(f"  return        {np.mean(rewards):8.2f} ± {np.std(rewards):.2f}")
-    print(f"  tone quality  {np.mean(qualities):8.3f} ± {np.std(qualities):.3f}")
+    print(f"  tone (reward) {np.mean(tones):8.3f} ± {np.std(tones):.3f}")
+    print(f"  overall head  {np.mean(qualities):8.3f} ± {np.std(qualities):.3f}")
     if dynamics:
         print(f"  dynamics      {np.mean(dynamics):8.3f} ± {np.std(dynamics):.3f}")
         print(f"  in-zone       {100*np.mean(in_zone):7.1f}%")

@@ -412,7 +412,8 @@ def measure_rhythm_from_motion(motion, strokes) -> dict:
 
 
 def render_baseline(strokes, report_dir, output_dir=None,
-                    flatten_envelope: bool = False, piece_path=None):
+                    flatten_envelope: bool = False, collapse: bool = True,
+                    piece_path=None):
     """Play the compiled strokes through the BASELINE player's loop.
 
     This exists because render_compiled's batching is what broke the rhythm.
@@ -477,7 +478,7 @@ def render_baseline(strokes, report_dir, output_dir=None,
                                         depth=mean_depth)]
             st_.segments = segs
             flat = True
-        if len(segs) > 1 and flat:
+        if len(segs) > 1 and flat and collapse:
             first, last = segs[0], segs[-1]
             st_.segments = [dataclasses.replace(
                 first, u_end=last.u_end,
@@ -486,6 +487,10 @@ def render_baseline(strokes, report_dir, output_dir=None,
     if collapsed:
         print(f"collapsed {collapsed} flat multi-segment stroke(s) to a single "
               f"moveL (the branch the baseline tracks 3 ms/note on)")
+    elif not collapse:
+        n_multi = sum(1 for s in plan if len(s.segments) > 1)
+        print(f"--no-collapse: keeping {n_multi} multi-segment stroke(s) on "
+              f"the blended moveL(path) branch (the env's own dispatch)")
     total = max(s.onset + s.duration for s in plan) + 2.0
 
     # Probe the input the way the baseline's main() does. PiecePlayer
@@ -835,6 +840,13 @@ def main():
                          "dispatches as a single moveL. Costs the intra-note "
                          "shaping; saves the ~120 ms per-note overrun that "
                          "moveL(path) charges.")
+    ap.add_argument("--no-collapse", action="store_true",
+                    help="keep FLAT multi-segment strokes on the blended "
+                         "moveL(path) branch instead of collapsing them to a "
+                         "single moveL. The live env path has no collapse "
+                         "check, so --baseline --no-collapse reproduces the "
+                         "training-frame zero-residual control: same actions "
+                         "AND same dispatch branch as episode 0 saw.")
     ap.add_argument("--render", choices=("baseline", "compiled"),
                     default="baseline",
                     help="how --compile dispatches. 'baseline' uses "
@@ -860,9 +872,12 @@ def main():
     # and their "611 ms mean slip" was blamed on the instrument before the
     # command line was (writeup-aug18 Part 6). Refuse loudly instead,
     # matching train_piece_logged's guard for driver-only flags.
+    if args.no_collapse and args.flatten_envelope:
+        sys.exit("--no-collapse and --flatten-envelope are opposites: one "
+                 "keeps the moveL(path) branch, the other averages it away")
     if not args.compile:
         _inert = [f for f in ("--render", "--flatten-envelope", "--max-run-s",
-                              "--fixed-action", "--only")
+                              "--fixed-action", "--only", "--no-collapse")
                   if any(a == f or a.startswith(f + "=")
                          for a in sys.argv[1:])]
         if _inert:
@@ -906,6 +921,7 @@ def main():
         if args.render == "baseline":
             rep = render_baseline(strokes, out_dir,
                                   flatten_envelope=args.flatten_envelope,
+                                  collapse=not args.no_collapse,
                                   piece_path=args.piece)
             print(json.dumps(rep, indent=2))
             (out_dir / "compiled_report.json").write_text(
