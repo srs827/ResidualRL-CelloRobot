@@ -1,0 +1,42 @@
+PS C:\Users\LG\Desktop\Project\ResidualRL-CelloRobot-main_ver3> python rl/eval_ver5.py `
+>> Base1=rl/checkpoints_piece/perform_20260822_163022 `
+>> RL1=rl/checkpoints_piece/perform_20260822_163124 `
+>> Base2=rl/checkpoints_piece/perform_20260822_163226 `
+>> RL2=rl/checkpoints_piece/perform_20260822_163331 `
+>> Base3=rl/checkpoints_piece/perform_20260822_163433 `
+>> RL3=rl/checkpoints_piece/perform_20260822_163538 `
+>> --csv yunpiece_6runs_evaluation.csv
+[BowingQualityClassifier] Loaded schema_version=2 checkpoint trained on 500 recordings (val_mse=0.0242).
+
+Base1 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.351  tone=0.321  attack=0.398  release=0.193
+  dynamic_hit=0.462  distance=0.883 dB  drift=22.08 ms
+
+RL1 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.414  tone=0.542  attack=0.310  release=0.365
+  dynamic_hit=0.269  distance=1.595 dB  drift=28.38 ms
+
+Base2 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.345  tone=0.339  attack=0.368  release=0.204
+  dynamic_hit=0.478  distance=0.879 dB  drift=19.31 ms
+
+RL2 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.423  tone=0.535  attack=0.332  release=0.373
+  dynamic_hit=0.242  distance=1.600 dB  drift=33.02 ms
+
+Base3 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.349  tone=0.354  attack=0.376  release=0.202
+  dynamic_hit=0.522  distance=0.759 dB  drift=28.59 ms
+
+RL3 [yunpiece]: 182 strokes, skipped=0
+  quality_eff=0.428  tone=0.550  attack=0.338  release=0.368
+  dynamic_hit=0.242  distance=1.609 dB  drift=34.22 ms
+
+Paired run differences (RL - Baseline; run is the statistical unit):
+  quality_eff            +0.0731 (SD 0.0089, n=3)
+  bow_control            +0.3829 (SD 0.0158, n=3)
+  dynamic_accuracy       +0.2658 (SD 0.0057, n=3)
+  dynamic_zone_hit       -0.2363 (SD 0.0440, n=3)
+  dynamic_distance_db    +0.7611 (SD 0.0773, n=3)
+  defect_score           -0.0955 (SD 0.0045, n=3)
+  drift_s                +0.0085 (SD 0.0045, n=3)

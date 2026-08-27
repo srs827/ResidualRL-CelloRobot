@@ -1,0 +1,42 @@
+PS C:\Users\LG\Desktop\Project\ResidualRL-CelloRobot-main_ver3> python rl/eval_ver5.py `
+>> Base1=vocalise_alt_6/perform_20260825_113105 `
+>> RL1=vocalise_alt_6/perform_20260825_113153 `
+>> Base2=vocalise_alt_6/perform_20260825_113239 `
+>> RL2=vocalise_alt_6/perform_20260825_113327 `
+>> Base3=vocalise_alt_6/perform_20260826_173255 `
+>> RL3=vocalise_alt_6/perform_20260826_173345 `
+>> --csv vocalise_alt_6runs_evaluation.csv
+[BowingQualityClassifier] Loaded schema_version=2 checkpoint trained on 500 recordings (val_mse=0.0242).
+
+Base1 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.598  tone=0.658  attack=0.758  release=0.331
+  dynamic_hit=0.294  distance=0.922 dB  drift=49.69 ms
+
+RL1 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.666  tone=0.648  attack=0.811  release=0.551
+  dynamic_hit=0.059  distance=1.675 dB  drift=14.03 ms
+
+Base2 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.601  tone=0.641  attack=0.789  release=0.363
+  dynamic_hit=0.294  distance=0.975 dB  drift=39.79 ms
+
+RL2 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.695  tone=0.686  attack=0.851  release=0.599
+  dynamic_hit=0.059  distance=1.628 dB  drift=14.33 ms
+
+Base3 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.662  tone=0.712  attack=0.824  release=0.279
+  dynamic_hit=0.235  distance=0.925 dB  drift=31.73 ms
+
+RL3 [vocalise]: 17 strokes, skipped=0
+  quality_eff=0.649  tone=0.648  attack=0.798  release=0.405
+  dynamic_hit=0.059  distance=1.733 dB  drift=12.27 ms
+
+Paired run differences (RL - Baseline; run is the statistical unit):
+  quality_eff            +0.0502 (SD 0.0559, n=3)
+  bow_control            +0.1585 (SD 0.0332, n=3)
+  dynamic_accuracy       +0.0428 (SD 0.0264, n=3)
+  dynamic_zone_hit       -0.2157 (SD 0.0340, n=3)
+  dynamic_distance_db    +0.7380 (SD 0.0782, n=3)
+  defect_score           -0.0976 (SD 0.0095, n=3)
+  drift_s                -0.0269 (SD 0.0082, n=3)

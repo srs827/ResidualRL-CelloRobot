@@ -1,0 +1,42 @@
+PS C:\Users\LG\Desktop\Project\ResidualRL-CelloRobot-main_ver3> python rl/eval_ver5.py `
+>> Base1=twinkle_ALT_performs_6folders/perform_20260824_003525 `
+>> RL1=twinkle_ALT_performs_6folders/perform_20260824_003609 `
+>> Base2=twinkle_ALT_performs_6folders/perform_20260824_003652 `
+>> RL2=twinkle_ALT_performs_6folders/perform_20260824_003735 `
+>> Base3=twinkle_ALT_performs_6folders/perform_20260824_003819 `
+>> RL3=twinkle_ALT_performs_6folders/perform_20260824_003902 `
+>> --csv twinkle_6runs_evaluation.csv
+[BowingQualityClassifier] Loaded schema_version=2 checkpoint trained on 500 recordings (val_mse=0.0242).
+
+Base1 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.650  tone=0.661  attack=0.671  release=0.576
+  dynamic_hit=0.310  distance=0.577 dB  drift=1.92 ms
+
+RL1 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.624  tone=0.670  attack=0.588  release=0.585
+  dynamic_hit=0.833  distance=0.065 dB  drift=629.33 ms
+
+Base2 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.677  tone=0.689  attack=0.719  release=0.582
+  dynamic_hit=0.333  distance=0.427 dB  drift=1.63 ms
+
+RL2 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.656  tone=0.704  attack=0.653  release=0.558
+  dynamic_hit=0.786  distance=0.061 dB  drift=673.71 ms
+
+Base3 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.701  tone=0.701  attack=0.749  release=0.632
+  dynamic_hit=0.238  distance=0.442 dB  drift=1.95 ms
+
+RL3 [twinkle-short]: 42 strokes, skipped=0
+  quality_eff=0.666  tone=0.712  attack=0.666  release=0.570
+  dynamic_hit=0.762  distance=0.078 dB  drift=638.15 ms
+
+Paired run differences (RL - Baseline; run is the statistical unit):
+  quality_eff            -0.0273 (SD 0.0071, n=3)
+  bow_control            -0.0666 (SD 0.0008, n=3)
+  dynamic_accuracy       -0.0813 (SD 0.0109, n=3)
+  dynamic_zone_hit       +0.5000 (SD 0.0412, n=3)
+  dynamic_distance_db    -0.4136 (SD 0.0848, n=3)
+  defect_score           +0.1169 (SD 0.0111, n=3)
+  drift_s                +0.6452 (SD 0.0237, n=3)
